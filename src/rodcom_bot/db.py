@@ -21,6 +21,35 @@ class Person:
     active: bool
 
 
+@dataclass(frozen=True)
+class Collection:
+    id: int
+    title: str
+    expected_amount: int
+    status: str
+    source: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CollectionMember:
+    collection_id: int
+    person_id: int
+    expected_amount: int
+    paid_amount: int
+    status: str
+    comment: str
+
+
+@dataclass(frozen=True)
+class CollectionSummary:
+    collection: Collection
+    members_count: int
+    paid_count: int
+    expected_total: int
+    paid_total: int
+
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -70,6 +99,25 @@ class Database:
                     payload TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(chat_id, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS collections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL UNIQUE,
+                    expected_amount INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL CHECK (status IN ('active', 'closed')) DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS collection_members (
+                    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+                    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                    expected_amount INTEGER NOT NULL DEFAULT 0,
+                    paid_amount INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL CHECK (status IN ('unpaid', 'partial', 'paid')) DEFAULT 'unpaid',
+                    comment TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(collection_id, person_id)
                 );
                 """
             )
@@ -256,6 +304,169 @@ class Database:
             )
             self.connection.commit()
 
+    def find_person_id_by_name(self, full_name: str) -> int | None:
+        normalized = _normalize_name(full_name)
+        with self._lock:
+            for row in self.connection.execute("SELECT id, full_name FROM people"):
+                if _normalize_name(row["full_name"]) == normalized:
+                    return int(row["id"])
+        return None
+
+    def upsert_collection(self, title: str, expected_amount: int, status: str, source: str) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._lock:
+            self.connection.execute(
+                """
+                INSERT INTO collections(title, expected_amount, status, source, created_at)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(title) DO UPDATE SET
+                    expected_amount = excluded.expected_amount,
+                    status = excluded.status,
+                    source = excluded.source
+                """,
+                (title, expected_amount, status, source, now),
+            )
+            row = self.connection.execute(
+                "SELECT id FROM collections WHERE title = ?",
+                (title,),
+            ).fetchone()
+            self.connection.commit()
+            return int(row["id"])
+
+    def upsert_collection_member(
+        self,
+        collection_id: int,
+        person_id: int,
+        expected_amount: int,
+        paid_amount: int,
+        comment: str = "",
+    ) -> None:
+        status = _payment_status(expected_amount, paid_amount)
+        with self._lock:
+            self.connection.execute(
+                """
+                INSERT INTO collection_members(
+                    collection_id, person_id, expected_amount, paid_amount, status, comment
+                )
+                VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(collection_id, person_id) DO UPDATE SET
+                    expected_amount = excluded.expected_amount,
+                    paid_amount = excluded.paid_amount,
+                    status = excluded.status,
+                    comment = excluded.comment
+                """,
+                (collection_id, person_id, expected_amount, paid_amount, status, comment),
+            )
+            self.connection.commit()
+
+    def list_collections(self) -> list[Collection]:
+        with self._lock:
+            return [
+                Collection(
+                    id=row["id"],
+                    title=row["title"],
+                    expected_amount=row["expected_amount"],
+                    status=row["status"],
+                    source=row["source"],
+                    created_at=row["created_at"],
+                )
+                for row in self.connection.execute("SELECT * FROM collections ORDER BY status, title")
+            ]
+
+    def create_collection_for_active_children(self, title: str, expected_amount: int) -> int:
+        collection_id = self.upsert_collection(
+            title=title,
+            expected_amount=expected_amount,
+            status="active",
+            source="bot",
+        )
+        with self._lock:
+            child_rows = self.connection.execute(
+                "SELECT id FROM people WHERE active = 1 AND role = 'child'"
+            ).fetchall()
+            for row in child_rows:
+                self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO collection_members(
+                        collection_id, person_id, expected_amount, paid_amount, status, comment
+                    )
+                    VALUES(?, ?, ?, 0, 'unpaid', '')
+                    """,
+                    (collection_id, int(row["id"]), expected_amount),
+                )
+            self.connection.commit()
+        return collection_id
+
+    def list_collection_summaries(self, active_only: bool = True) -> list[CollectionSummary]:
+        with self._lock:
+            query = """
+                SELECT
+                    c.*,
+                    COUNT(cm.person_id) AS members_count,
+                    SUM(CASE WHEN cm.status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+                    SUM(cm.expected_amount) AS expected_total,
+                    SUM(cm.paid_amount) AS paid_total
+                FROM collections c
+                LEFT JOIN collection_members cm ON cm.collection_id = c.id
+            """
+            params: tuple[object, ...] = ()
+            if active_only:
+                query += " WHERE c.status = ?"
+                params = ("active",)
+            query += " GROUP BY c.id ORDER BY c.status, c.title"
+            summaries = []
+            for row in self.connection.execute(query, params):
+                collection = Collection(
+                    id=row["id"],
+                    title=row["title"],
+                    expected_amount=row["expected_amount"],
+                    status=row["status"],
+                    source=row["source"],
+                    created_at=row["created_at"],
+                )
+                summaries.append(
+                    CollectionSummary(
+                        collection=collection,
+                        members_count=int(row["members_count"] or 0),
+                        paid_count=int(row["paid_count"] or 0),
+                        expected_total=int(row["expected_total"] or 0),
+                        paid_total=int(row["paid_total"] or 0),
+                    )
+                )
+            return summaries
+
+    def set_collection_payment(self, collection_id: int, person_id: int, paid_amount: int) -> bool:
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT expected_amount FROM collection_members
+                WHERE collection_id = ? AND person_id = ?
+                """,
+                (collection_id, person_id),
+            ).fetchone()
+            if row is None:
+                return False
+            status = _payment_status(int(row["expected_amount"]), paid_amount)
+            cursor = self.connection.execute(
+                """
+                UPDATE collection_members
+                SET paid_amount = ?, status = ?
+                WHERE collection_id = ? AND person_id = ?
+                """,
+                (paid_amount, status, collection_id, person_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    def close_collection(self, collection_id: int) -> bool:
+        with self._lock:
+            cursor = self.connection.execute(
+                "UPDATE collections SET status = 'closed' WHERE id = ?",
+                (collection_id,),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_person(row: sqlite3.Row) -> Person:
         return Person(
@@ -268,3 +479,15 @@ class Database:
             note=row["note"],
             active=bool(row["active"]),
         )
+
+
+def _payment_status(expected_amount: int, paid_amount: int) -> str:
+    if paid_amount <= 0:
+        return "unpaid"
+    if expected_amount <= 0 or paid_amount >= expected_amount:
+        return "paid"
+    return "partial"
+
+
+def _normalize_name(value: str) -> str:
+    return " ".join(value.replace("\u00a0", " ").split()).casefold()

@@ -2,7 +2,7 @@ from datetime import date
 import unittest
 
 from rodcom_bot.db import Person
-from rodcom_bot.bot import _parse_time
+from rodcom_bot.bot import _parse_amount, _parse_time
 from rodcom_bot.reminders import ReminderEvent, format_event, format_events
 
 
@@ -41,6 +41,12 @@ class UiFormattingTest(unittest.TestCase):
         self.assertIsNone(_parse_time("24:00"))
         self.assertIsNone(_parse_time("10:99"))
         self.assertIsNone(_parse_time("утро"))
+
+    def test_parse_amount(self):
+        self.assertEqual(_parse_amount("1000"), 1000)
+        self.assertEqual(_parse_amount("1 163 ₽"), 1163)
+        self.assertEqual(_parse_amount("220.5"), 220)
+        self.assertIsNone(_parse_amount("нет"))
 
 
 if __name__ == "__main__":

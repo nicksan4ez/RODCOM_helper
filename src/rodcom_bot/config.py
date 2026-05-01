@@ -13,7 +13,7 @@ class Config:
     timezone: str
     check_time: str
     database_path: Path
-    source_docx_path: Path
+    source_docx_path: Path | None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -24,6 +24,7 @@ class Config:
             for value in os.getenv("ADMIN_USER_IDS", "").split(",")
             if value.strip()
         }
+        source_docx_path = os.getenv("SOURCE_DOCX_PATH", "").strip()
         return cls(
             bot_token=bot_token,
             admin_chat_id=admin_chat_id,
@@ -31,7 +32,7 @@ class Config:
             timezone=os.getenv("TIMEZONE", "Asia/Vladivostok"),
             check_time=os.getenv("CHECK_TIME", "07:30"),
             database_path=Path(os.getenv("DATABASE_PATH", "/data/rodcom.sqlite3")),
-            source_docx_path=Path(os.getenv("SOURCE_DOCX_PATH", "/app/List.docx")),
+            source_docx_path=Path(source_docx_path) if source_docx_path else None,
         )
 
 
@@ -40,4 +41,3 @@ def _required(name: str) -> str:
     if not value:
         raise RuntimeError(f"Environment variable {name} is required")
     return value
-

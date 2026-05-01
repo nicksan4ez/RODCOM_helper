@@ -39,10 +39,13 @@ class RodcomBot:
 
         people_before_import = self.db.list_people(active_only=False)
         if not people_before_import:
-            LOGGER.info("Database is empty, importing initial people from %s", self.config.source_docx_path)
-            people = import_people_from_docx(self.config.source_docx_path)
-            inserted = self.db.seed_people(people)
-            LOGGER.info("Imported %s people from %s", inserted, self.config.source_docx_path)
+            if self.config.source_docx_path is not None and self.config.source_docx_path.exists():
+                LOGGER.info("Database is empty, importing initial people from %s", self.config.source_docx_path)
+                people = import_people_from_docx(self.config.source_docx_path)
+                inserted = self.db.seed_people(people)
+                LOGGER.info("Imported %s people from %s", inserted, self.config.source_docx_path)
+            else:
+                LOGGER.info("Database is empty and SOURCE_DOCX_PATH is not provided; skipping DOCX import")
         else:
             LOGGER.info("Database already contains %s people, skipping DOCX import", len(people_before_import))
 
@@ -176,6 +179,8 @@ class RodcomBot:
             return self._delete(rest)
         if command == "/settings":
             return self._settings()
+        if command == "/collections":
+            return self._collections()
         if command == "/test_reminder":
             return format_events("Тестовое напоминание", self.reminders.upcoming(today, limit=3))
         return warn("Неизвестная команда.") + "\n\n" + help_text()
@@ -202,6 +207,11 @@ class RodcomBot:
             return self._people(sort_by="name"), people_menu_keyboard(active_sort="name")
         if data == "settings":
             return self._settings(), settings_keyboard()
+        if data == "collections":
+            return self._collections(), collections_keyboard()
+        if data == "collection_new":
+            self.db.set_user_state(chat_id, user_id, "collection_new_title")
+            return prompt("Новый сбор", "Введите название сбора.", "Экскурсия в музей"), cancel_keyboard()
         if data == "settings_time":
             self.db.set_user_state(chat_id, user_id, "settings_time")
             return prompt("Время напоминаний", "Введите время ежедневной проверки в формате ЧЧ:ММ.", "07:30"), cancel_keyboard()
@@ -342,6 +352,32 @@ class RodcomBot:
             self.db.clear_user_state(chat_id, user_id)
             LOGGER.info("Daily check time changed to %s", parsed_time)
             return done(f"Время напоминаний изменено на <b>{h(parsed_time)}</b>."), settings_keyboard()
+
+        if state == "collection_new_title":
+            title = text.strip()
+            if not title:
+                return warn("Название сбора не должно быть пустым."), cancel_keyboard()
+            self.db.set_user_state(
+                chat_id,
+                user_id,
+                "collection_new_amount",
+                json.dumps({"title": title}, ensure_ascii=False),
+            )
+            return prompt("Сумма сбора", "Введите сумму с одного ученика в рублях.", "1000"), cancel_keyboard()
+
+        if state == "collection_new_amount":
+            amount = _parse_amount(text)
+            if amount is None or amount <= 0:
+                return warn("Введите сумму числом, например 1000."), cancel_keyboard()
+            title = payload["title"]
+            try:
+                collection_id = self.db.create_collection_for_active_children(title, amount)
+            except Exception as exc:
+                LOGGER.exception("Could not create collection")
+                self.db.clear_user_state(chat_id, user_id)
+                return error(f"Не удалось создать сбор: {h(exc)}"), collections_keyboard()
+            self.db.clear_user_state(chat_id, user_id)
+            return done(f"Создан сбор <b>{h(title)}</b> на сумму <b>{amount} ₽</b> с ученика.\nНомер сбора: <code>{collection_id}</code>"), collections_keyboard()
 
         return None
 
@@ -502,6 +538,22 @@ class RodcomBot:
     def _check_time(self) -> str:
         return self.db.get_setting("check_time", self.config.check_time) or self.config.check_time
 
+    def _collections(self) -> str:
+        summaries = self.db.list_collection_summaries(active_only=True)
+        if not summaries:
+            return "💰 <b>Сборы</b>\n\nАктивных сборов пока нет."
+        lines = ["💰 <b>Сборы</b>\n"]
+        for summary in summaries:
+            remaining = summary.expected_total - summary.paid_total
+            lines.append(
+                f"<code>{summary.collection.id}</code> · <b>{h(summary.collection.title)}</b>\n"
+                f"   👥 Сдали: <b>{summary.paid_count}/{summary.members_count}</b>\n"
+                f"   💵 Сумма: {summary.collection.expected_amount} ₽ с ученика\n"
+                f"   ✅ Собрано: {summary.paid_total} ₽\n"
+                f"   ⏳ Осталось: {remaining} ₽"
+            )
+        return "\n\n".join(lines)
+
 
 def _sort_people(people, sort_by: str):
     if sort_by == "birthday":
@@ -533,8 +585,18 @@ def main_menu_keyboard() -> dict:
             ],
             [
                 {"text": "👥 Список", "callback_data": "people"},
-                {"text": "⚙️ Настройки", "callback_data": "settings"},
+                {"text": "💰 Сборы", "callback_data": "collections"},
             ],
+            [{"text": "⚙️ Настройки", "callback_data": "settings"}],
+        ]
+    }
+
+
+def collections_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "➕ Новый сбор", "callback_data": "collection_new"}],
+            [{"text": "🏠 Главное меню", "callback_data": "menu"}],
         ]
     }
 
@@ -633,6 +695,13 @@ def _parse_time(value: str) -> str | None:
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         return None
     return f"{hour:02d}:{minute:02d}"
+
+
+def _parse_amount(value: str) -> int | None:
+    match = re.search(r"\d+(?:[.,]\d+)?", value.replace(" ", ""))
+    if not match:
+        return None
+    return int(round(float(match.group(0).replace(",", "."))))
 
 
 def _parse_person_id(value: str) -> int | None:

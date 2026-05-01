@@ -41,6 +41,45 @@ docker compose down
 
 `SOURCE_DOCX_PATH` нужен только для первого заполнения пустой базы. Если база уже создана в volume, бот при перезапуске не перечитывает DOCX и не затирает изменения, сделанные через команды.
 
+## Одноразовый импорт исходных файлов
+
+DOCX и XLSX не хранятся в Docker-образе постоянно. Их можно примонтировать только на время импорта.
+
+Импорт списка класса из DOCX:
+
+```bash
+docker compose run --rm \
+  -v "$PWD/List.docx:/tmp/List.docx:ro" \
+  rodcom-bot \
+  python -m rodcom_bot.people_import \
+    --db /data/rodcom.sqlite3 \
+    --docx /tmp/List.docx
+```
+
+Предпросмотр листов сборов из Excel без записи в базу:
+
+```bash
+docker compose run --rm \
+  -v "$PWD/Касса класса.xlsx:/tmp/cashbox.xlsx:ro" \
+  rodcom-bot \
+  python -m rodcom_bot.collections_import \
+    --db /data/rodcom.sqlite3 \
+    --xlsx /tmp/cashbox.xlsx \
+    --preview
+```
+
+Импорт только выбранных листов:
+
+```bash
+docker compose run --rm \
+  -v "$PWD/Касса класса.xlsx:/tmp/cashbox.xlsx:ro" \
+  rodcom-bot \
+  python -m rodcom_bot.collections_import \
+    --db /data/rodcom.sqlite3 \
+    --xlsx /tmp/cashbox.xlsx \
+    --include "Название листа 1,Название листа 2"
+```
+
 ## Команды
 
 Основной интерфейс кнопочный. Напишите `/start`, затем выбирайте действие кнопками:
