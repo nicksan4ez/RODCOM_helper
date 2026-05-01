@@ -157,7 +157,7 @@ class RodcomBot:
         if command in {"/start", "/help"}:
             return main_menu_text() + "\n\n" + help_text()
         if command == "/next":
-            return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10))
+            return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=3))
         if command == "/today":
             return format_today_events("Сегодня", self.reminders.matching_today(today), today)
         if command == "/month":
@@ -191,7 +191,7 @@ class RodcomBot:
             self.db.clear_user_state(chat_id, user_id)
             return main_menu_text(), main_menu_keyboard()
         if data == "next":
-            return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10)), main_menu_keyboard()
+            return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=3)), main_menu_keyboard()
         if data == "today":
             return format_today_events("Сегодня", self.reminders.matching_today(today), today), main_menu_keyboard()
         if data == "people":

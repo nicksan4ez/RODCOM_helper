@@ -78,7 +78,7 @@ def format_event(event: ReminderEvent) -> str:
     person = event.person
     role = "👩‍🏫 учитель" if person.role == "teacher" else "🎒 ученик"
     age = age_on(person.birth_year, event.birthday)
-    age_text = f" · исполнится {age}" if age is not None else ""
+    age_text = f" · исполнится {_emoji_number(age)}" if age is not None else ""
     note = f"\n   📝 {h(person.note)}" if person.note else ""
     return (
         f"🎂 <b>{h(person.full_name)}</b>\n"
@@ -114,3 +114,19 @@ def format_today_events(title: str, events: list[ReminderEvent], today: date) ->
     return f"📌 <b>{h(title)}</b>\n\n" + "\n\n".join(
         format_today_event(event, today) for event in events
     )
+
+
+def _emoji_number(value: int) -> str:
+    digits = {
+        "0": "0️⃣",
+        "1": "1️⃣",
+        "2": "2️⃣",
+        "3": "3️⃣",
+        "4": "4️⃣",
+        "5": "5️⃣",
+        "6": "6️⃣",
+        "7": "7️⃣",
+        "8": "8️⃣",
+        "9": "9️⃣",
+    }
+    return "".join(digits.get(char, char) for char in str(value))

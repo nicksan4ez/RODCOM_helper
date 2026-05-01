@@ -29,6 +29,7 @@ class UiFormattingTest(unittest.TestCase):
 
         self.assertIn("Иванов &amp; Петров &lt;test&gt;", text)
         self.assertIn("M&amp;M &lt;важно&gt;", text)
+        self.assertIn("исполнится 8️⃣", text)
         self.assertIn("🎂", text)
 
     def test_empty_events_message_is_friendly(self):
