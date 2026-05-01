@@ -31,7 +31,7 @@ class Config:
             timezone=os.getenv("TIMEZONE", "Asia/Vladivostok"),
             check_time=os.getenv("CHECK_TIME", "07:30"),
             database_path=Path(os.getenv("DATABASE_PATH", "/data/rodcom.sqlite3")),
-            source_docx_path=Path(os.getenv("SOURCE_DOCX_PATH", "/app/Список Дни Рождения.docx")),
+            source_docx_path=Path(os.getenv("SOURCE_DOCX_PATH", "/app/List.docx")),
         )
 
 

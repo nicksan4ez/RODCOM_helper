@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class DocxImportTest(unittest.TestCase):
     def test_imports_children_and_teacher(self):
-        people = import_people_from_docx(ROOT / "Список Дни Рождения.docx")
+        people = import_people_from_docx(ROOT / "List.docx")
 
         children = [person for person in people if person.role == "child"]
         teachers = [person for person in people if person.role == "teacher"]
