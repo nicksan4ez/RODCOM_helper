@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .calendar_ru import WorkCalendar
@@ -13,9 +14,11 @@ from .config import Config
 from .db import Database
 from .docx_import import import_people_from_docx
 from .formatting import MONTHS_GENITIVE, format_date_ru
+from .report_xlsx import build_collections_report
 from .reminders import ReminderService, format_events, format_today_events
 from .telegram_api import TelegramClient
 from .ui import done, error, h, help_text, main_menu_text, prompt, warn
+from .yandex_disk import YandexDiskClient
 
 
 LOGGER = logging.getLogger(__name__)
@@ -209,6 +212,8 @@ class RodcomBot:
             return self._settings(), settings_keyboard()
         if data == "collections":
             return self._collections(), self._collections_keyboard()
+        if data == "collection_report":
+            return self._update_collections_report(), self._collections_keyboard()
         if data.startswith("collection_open:"):
             collection_id = int(data.split(":", 1)[1])
             return self._collection_detail(collection_id), collection_detail_keyboard(collection_id)
@@ -616,6 +621,28 @@ class RodcomBot:
     def _collections_keyboard(self) -> dict:
         return collections_keyboard(self.db.list_collection_summaries(active_only=True))
 
+    def _update_collections_report(self) -> str:
+        if not self.db.list_collection_summaries(active_only=False):
+            return warn("Сборов пока нет. Сначала создайте или импортируйте сбор.")
+        if not self.config.yandex_disk_token or not self.config.yandex_disk_report_path:
+            return warn(
+                "Отчет сформировать можно, но загрузка на Яндекс.Диск не настроена.\n\n"
+                "Нужно заполнить <code>YANDEX_DISK_TOKEN</code> и <code>YANDEX_DISK_REPORT_PATH</code> в .env."
+            )
+
+        report_path = Path("/tmp/rodcom_collections_report.xlsx")
+        disk_path = _report_disk_path(self.config.yandex_disk_report_path)
+        try:
+            build_collections_report(self.db, report_path)
+            YandexDiskClient(self.config.yandex_disk_token).upload_file(report_path, disk_path)
+        except Exception as exc:
+            LOGGER.exception("Could not update Yandex Disk collections report")
+            return error(f"Не удалось обновить отчет: {h(exc)}")
+        return done(
+            "Отчет по сборам обновлен на Яндекс.Диске.\n\n"
+            f"Файл: <code>{h(disk_path)}</code>"
+        )
+
     def _collection_detail(self, collection_id: int) -> str:
         summary = self.db.get_collection_summary(collection_id)
         if summary is None:
@@ -724,6 +751,7 @@ def collections_keyboard(summaries=None) -> dict:
     rows = []
     for summary in summaries or []:
         rows.append([{"text": f"💰 {summary.collection.title}", "callback_data": f"collection_open:{summary.collection.id}"}])
+    rows.append([{"text": "📤 Обновить отчет", "callback_data": "collection_report"}])
     rows.append([{"text": "➕ Новый сбор", "callback_data": "collection_new"}])
     rows.append([{"text": "🏠 Главное меню", "callback_data": "menu"}])
     return {"inline_keyboard": rows}
@@ -866,3 +894,12 @@ def _parse_person_ids(value: str) -> list[int]:
         elif part:
             return []
     return list(dict.fromkeys(ids))
+
+
+def _report_disk_path(value: str) -> str:
+    value = value.strip()
+    if value.endswith("/"):
+        return value + "sbori_report.xlsx"
+    if not value.lower().endswith(".xlsx"):
+        return value + "/sbori_report.xlsx"
+    return value

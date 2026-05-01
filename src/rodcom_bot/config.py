@@ -14,6 +14,8 @@ class Config:
     check_time: str
     database_path: Path
     source_docx_path: Path | None
+    yandex_disk_token: str | None
+    yandex_disk_report_path: str | None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -25,6 +27,8 @@ class Config:
             if value.strip()
         }
         source_docx_path = os.getenv("SOURCE_DOCX_PATH", "").strip()
+        yandex_disk_token = os.getenv("YANDEX_DISK_TOKEN", "").strip()
+        yandex_disk_report_path = os.getenv("YANDEX_DISK_REPORT_PATH", "").strip()
         return cls(
             bot_token=bot_token,
             admin_chat_id=admin_chat_id,
@@ -33,6 +37,8 @@ class Config:
             check_time=os.getenv("CHECK_TIME", "07:30"),
             database_path=Path(os.getenv("DATABASE_PATH", "/data/rodcom.sqlite3")),
             source_docx_path=Path(source_docx_path) if source_docx_path else None,
+            yandex_disk_token=yandex_disk_token or None,
+            yandex_disk_report_path=yandex_disk_report_path or None,
         )
 
 
