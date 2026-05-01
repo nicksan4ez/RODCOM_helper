@@ -35,6 +35,7 @@ class Collection:
 class CollectionMember:
     collection_id: int
     person_id: int
+    full_name: str
     expected_amount: int
     paid_amount: int
     status: str
@@ -457,6 +458,63 @@ class Database:
             )
             self.connection.commit()
             return cursor.rowcount > 0
+
+    def get_collection_summary(self, collection_id: int) -> CollectionSummary | None:
+        with self._lock:
+            query = """
+                SELECT
+                    c.*,
+                    COUNT(cm.person_id) AS members_count,
+                    SUM(CASE WHEN cm.status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+                    SUM(cm.expected_amount) AS expected_total,
+                    SUM(cm.paid_amount) AS paid_total
+                FROM collections c
+                LEFT JOIN collection_members cm ON cm.collection_id = c.id
+                WHERE c.id = ?
+                GROUP BY c.id
+            """
+            row = self.connection.execute(query, (collection_id,)).fetchone()
+            if row is None:
+                return None
+            return CollectionSummary(
+                collection=Collection(
+                    id=row["id"],
+                    title=row["title"],
+                    expected_amount=row["expected_amount"],
+                    status=row["status"],
+                    source=row["source"],
+                    created_at=row["created_at"],
+                ),
+                members_count=int(row["members_count"] or 0),
+                paid_count=int(row["paid_count"] or 0),
+                expected_total=int(row["expected_total"] or 0),
+                paid_total=int(row["paid_total"] or 0),
+            )
+
+    def list_collection_members(self, collection_id: int) -> list[CollectionMember]:
+        with self._lock:
+            rows = self.connection.execute(
+                """
+                SELECT cm.*, p.full_name
+                FROM collection_members cm
+                JOIN people p ON p.id = cm.person_id
+                WHERE cm.collection_id = ?
+                ORDER BY p.full_name
+                """,
+                (collection_id,),
+            ).fetchall()
+            return [
+                CollectionMember(
+                    collection_id=row["collection_id"],
+                    person_id=row["person_id"],
+                    full_name=row["full_name"],
+                    expected_amount=row["expected_amount"],
+                    paid_amount=row["paid_amount"],
+                    status=row["status"],
+                    comment=row["comment"],
+                )
+                for row in rows
+            ]
 
     def close_collection(self, collection_id: int) -> bool:
         with self._lock:

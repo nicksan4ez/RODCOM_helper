@@ -208,10 +208,31 @@ class RodcomBot:
         if data == "settings":
             return self._settings(), settings_keyboard()
         if data == "collections":
-            return self._collections(), collections_keyboard()
+            return self._collections(), self._collections_keyboard()
+        if data.startswith("collection_open:"):
+            collection_id = int(data.split(":", 1)[1])
+            return self._collection_detail(collection_id), collection_detail_keyboard(collection_id)
         if data == "collection_new":
             self.db.set_user_state(chat_id, user_id, "collection_new_title")
             return prompt("Новый сбор", "Введите название сбора.", "Экскурсия в музей"), cancel_keyboard()
+        if data.startswith("collection_pay:"):
+            collection_id = int(data.split(":", 1)[1])
+            self.db.set_user_state(chat_id, user_id, "collection_pay_person", json.dumps({"collection_id": collection_id}))
+            return self._collection_members_prompt(collection_id, only_unpaid=True, action="отметить оплату"), cancel_keyboard()
+        if data.startswith("collection_unpay:"):
+            collection_id = int(data.split(":", 1)[1])
+            self.db.set_user_state(chat_id, user_id, "collection_unpay_person", json.dumps({"collection_id": collection_id}))
+            return self._collection_members_prompt(collection_id, only_unpaid=False, action="отменить оплату"), cancel_keyboard()
+        if data.startswith("collection_debtors:"):
+            collection_id = int(data.split(":", 1)[1])
+            return self._collection_debtors(collection_id), collection_detail_keyboard(collection_id)
+        if data.startswith("collection_close:"):
+            collection_id = int(data.split(":", 1)[1])
+            return "🔒 <b>Закрыть сбор?</b>\n\nПосле закрытия он пропадет из активных сборов.", collection_close_confirm_keyboard(collection_id)
+        if data.startswith("collection_close_confirm:"):
+            collection_id = int(data.split(":", 1)[1])
+            closed = self.db.close_collection(collection_id)
+            return (done("Сбор закрыт.") if closed else error("Не нашел сбор.")), self._collections_keyboard()
         if data == "settings_time":
             self.db.set_user_state(chat_id, user_id, "settings_time")
             return prompt("Время напоминаний", "Введите время ежедневной проверки в формате ЧЧ:ММ.", "07:30"), cancel_keyboard()
@@ -375,9 +396,31 @@ class RodcomBot:
             except Exception as exc:
                 LOGGER.exception("Could not create collection")
                 self.db.clear_user_state(chat_id, user_id)
-                return error(f"Не удалось создать сбор: {h(exc)}"), collections_keyboard()
+                return error(f"Не удалось создать сбор: {h(exc)}"), self._collections_keyboard()
             self.db.clear_user_state(chat_id, user_id)
-            return done(f"Создан сбор <b>{h(title)}</b> на сумму <b>{amount} ₽</b> с ученика.\nНомер сбора: <code>{collection_id}</code>"), collections_keyboard()
+            return done(f"Создан сбор <b>{h(title)}</b> на сумму <b>{amount} ₽</b> с ученика.\nНомер сбора: <code>{collection_id}</code>"), self._collections_keyboard()
+
+        if state == "collection_pay_person":
+            person_id = _parse_person_id(text)
+            collection_id = int(payload["collection_id"])
+            if person_id is None:
+                return warn("Введите только номер ребенка из списка."), cancel_keyboard()
+            summary = self.db.get_collection_summary(collection_id)
+            if summary is None:
+                self.db.clear_user_state(chat_id, user_id)
+                return error("Не нашел сбор."), self._collections_keyboard()
+            updated = self.db.set_collection_payment(collection_id, person_id, summary.collection.expected_amount)
+            self.db.clear_user_state(chat_id, user_id)
+            return (done("Оплата отмечена.") if updated else error("Не нашел ребенка в этом сборе.")), collection_detail_keyboard(collection_id)
+
+        if state == "collection_unpay_person":
+            person_id = _parse_person_id(text)
+            collection_id = int(payload["collection_id"])
+            if person_id is None:
+                return warn("Введите только номер ребенка из списка."), cancel_keyboard()
+            updated = self.db.set_collection_payment(collection_id, person_id, 0)
+            self.db.clear_user_state(chat_id, user_id)
+            return (done("Оплата отменена.") if updated else error("Не нашел ребенка в этом сборе.")), collection_detail_keyboard(collection_id)
 
         return None
 
@@ -554,6 +597,61 @@ class RodcomBot:
             )
         return "\n\n".join(lines)
 
+    def _collections_keyboard(self) -> dict:
+        return collections_keyboard(self.db.list_collection_summaries(active_only=True))
+
+    def _collection_detail(self, collection_id: int) -> str:
+        summary = self.db.get_collection_summary(collection_id)
+        if summary is None:
+            return error("Не нашел сбор.")
+        remaining = summary.expected_total - summary.paid_total
+        debtors = [member for member in self.db.list_collection_members(collection_id) if member.status != "paid"]
+        lines = [
+            f"💰 <b>{h(summary.collection.title)}</b>",
+            "",
+            f"👥 Сдали: <b>{summary.paid_count}/{summary.members_count}</b>",
+            f"💵 Сумма: {summary.collection.expected_amount} ₽ с ученика",
+            f"✅ Собрано: {summary.paid_total} ₽",
+            f"⏳ Осталось: {remaining} ₽",
+        ]
+        if debtors:
+            lines.append("\n❌ <b>Не сдали</b>")
+            lines.extend(f"<code>{member.person_id}</code> · {h(member.full_name)}" for member in debtors[:20])
+            if len(debtors) > 20:
+                lines.append(f"...и еще {len(debtors) - 20}")
+        else:
+            lines.append("\n✅ Все сдали.")
+        return "\n".join(lines)
+
+    def _collection_debtors(self, collection_id: int) -> str:
+        summary = self.db.get_collection_summary(collection_id)
+        if summary is None:
+            return error("Не нашел сбор.")
+        debtors = [member for member in self.db.list_collection_members(collection_id) if member.status != "paid"]
+        if not debtors:
+            return f"✅ <b>{h(summary.collection.title)}</b>\n\nВсе сдали."
+        lines = [f"❌ <b>Не сдали: {h(summary.collection.title)}</b>"]
+        lines.extend(f"• {h(member.full_name)}" for member in debtors)
+        return "\n".join(lines)
+
+    def _collection_members_prompt(self, collection_id: int, only_unpaid: bool, action: str) -> str:
+        summary = self.db.get_collection_summary(collection_id)
+        if summary is None:
+            return error("Не нашел сбор.")
+        members = self.db.list_collection_members(collection_id)
+        if only_unpaid:
+            members = [member for member in members if member.status != "paid"]
+        else:
+            members = [member for member in members if member.status == "paid"]
+        if not members:
+            return warn("Подходящих записей нет.")
+        lines = [f"✍️ <b>{h(action.capitalize())}</b>\n", f"Сбор: <b>{h(summary.collection.title)}</b>\n"]
+        for member in members:
+            status = "✅" if member.status == "paid" else "❌"
+            lines.append(f"<code>{member.person_id}</code> · {status} {h(member.full_name)}")
+        lines.append("\nВведите номер ребенка.")
+        return "\n".join(lines)
+
 
 def _sort_people(people, sort_by: str):
     if sort_by == "birthday":
@@ -592,11 +690,32 @@ def main_menu_keyboard() -> dict:
     }
 
 
-def collections_keyboard() -> dict:
+def collections_keyboard(summaries=None) -> dict:
+    rows = []
+    for summary in summaries or []:
+        rows.append([{"text": f"💰 {summary.collection.title}", "callback_data": f"collection_open:{summary.collection.id}"}])
+    rows.append([{"text": "➕ Новый сбор", "callback_data": "collection_new"}])
+    rows.append([{"text": "🏠 Главное меню", "callback_data": "menu"}])
+    return {"inline_keyboard": rows}
+
+
+def collection_detail_keyboard(collection_id: int) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "➕ Новый сбор", "callback_data": "collection_new"}],
-            [{"text": "🏠 Главное меню", "callback_data": "menu"}],
+            [{"text": "✅ Отметить оплату", "callback_data": f"collection_pay:{collection_id}"}],
+            [{"text": "↩️ Отменить оплату", "callback_data": f"collection_unpay:{collection_id}"}],
+            [{"text": "❌ Должники", "callback_data": f"collection_debtors:{collection_id}"}],
+            [{"text": "🔒 Закрыть сбор", "callback_data": f"collection_close:{collection_id}"}],
+            [{"text": "💰 Все сборы", "callback_data": "collections"}],
+        ]
+    }
+
+
+def collection_close_confirm_keyboard(collection_id: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "🔒 Да, закрыть", "callback_data": f"collection_close_confirm:{collection_id}"}],
+            [{"text": "↩️ Назад к сбору", "callback_data": f"collection_open:{collection_id}"}],
         ]
     }
 
