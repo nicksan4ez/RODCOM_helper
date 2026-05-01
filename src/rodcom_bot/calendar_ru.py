@@ -66,20 +66,22 @@ class WorkCalendar:
             candidate -= timedelta(days=1)
         return candidate
 
+    def next_workday_on_or_after(self, day: date) -> date:
+        candidate = day
+        while not self.is_workday(candidate):
+            candidate += timedelta(days=1)
+        return candidate
+
 
 def celebration_date(birthday: date, calendar: WorkCalendar) -> date:
-    return calendar.nearest_workday(birthday)
+    return calendar.next_workday_on_or_after(birthday)
 
 
-def reminder_date(birthday: date, calendar: WorkCalendar, days_before: int = 2) -> date:
-    celebration = celebration_date(birthday, calendar)
-    candidate = celebration - timedelta(days=days_before)
+def reminder_date(birthday: date, calendar: WorkCalendar, days_before: int = 1) -> date:
+    candidate = birthday - timedelta(days=days_before)
 
     if not calendar.is_workday(candidate):
-        candidate = calendar.nearest_workday(candidate)
-
-    if candidate >= celebration:
-        candidate = calendar.previous_workday_before(celebration)
+        candidate = calendar.previous_workday_before(candidate + timedelta(days=1))
 
     return candidate
 
@@ -96,4 +98,3 @@ def _birthday_in_year(year: int, month: int, day: int) -> date:
     if month == 2 and day == 29:
         return date(year, 2, 28)
     return date(year, month, day)
-
