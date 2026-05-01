@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,28 +16,34 @@ class YandexDiskClient:
     def upload_file(self, local_path: str | Path, disk_path: str, overwrite: bool = True) -> None:
         self._ensure_parent_dirs(disk_path)
         upload_url = self._get_upload_url(disk_path, overwrite)
-        request = urllib.request.Request(
-            upload_url,
-            data=Path(local_path).read_bytes(),
-            method="PUT",
-        )
-        try:
+        data = Path(local_path).read_bytes()
+
+        def upload_once() -> None:
+            request = urllib.request.Request(upload_url, data=data, method="PUT")
             with urllib.request.urlopen(request, timeout=60) as response:
                 if response.status not in {200, 201, 202}:
                     raise RuntimeError(f"Yandex Disk upload failed with status {response.status}")
+
+        try:
+            _with_locked_retry(upload_once)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Yandex Disk upload failed", exc)) from exc
 
     def _get_upload_url(self, disk_path: str, overwrite: bool) -> str:
         query = urllib.parse.urlencode({"path": disk_path, "overwrite": str(overwrite).lower()})
-        request = urllib.request.Request(
-            f"https://cloud-api.yandex.net/v1/disk/resources/upload?{query}",
-            headers={"Authorization": f"OAuth {self.token}"},
-            method="GET",
-        )
-        try:
+        url = f"https://cloud-api.yandex.net/v1/disk/resources/upload?{query}"
+
+        def get_once() -> dict:
+            request = urllib.request.Request(
+                url,
+                headers={"Authorization": f"OAuth {self.token}"},
+                method="GET",
+            )
             with urllib.request.urlopen(request, timeout=30) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                return json.loads(response.read().decode("utf-8"))
+
+        try:
+            payload = _with_locked_retry(get_once)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Could not get Yandex Disk upload URL", exc)) from exc
         href = payload.get("href")
@@ -51,23 +58,63 @@ class YandexDiskClient:
         current = ""
         for part in [part for part in parent.split("/") if part]:
             current += "/" + part
-            self._create_dir(current)
+            if not self._resource_exists(current):
+                self._create_dir(current)
+
+    def _resource_exists(self, disk_path: str) -> bool:
+        query = urllib.parse.urlencode({"path": disk_path})
+        url = f"https://cloud-api.yandex.net/v1/disk/resources?{query}"
+
+        def exists_once() -> bool:
+            request = urllib.request.Request(
+                url,
+                headers={"Authorization": f"OAuth {self.token}"},
+                method="GET",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30):
+                    return True
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return False
+                raise
+
+        try:
+            return _with_locked_retry(exists_once)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(_http_error_message("Could not check Yandex Disk folder", exc)) from exc
 
     def _create_dir(self, disk_path: str) -> None:
         query = urllib.parse.urlencode({"path": disk_path})
-        request = urllib.request.Request(
-            f"https://cloud-api.yandex.net/v1/disk/resources?{query}",
-            headers={"Authorization": f"OAuth {self.token}"},
-            method="PUT",
-        )
-        try:
+        url = f"https://cloud-api.yandex.net/v1/disk/resources?{query}"
+
+        def create_once() -> None:
+            request = urllib.request.Request(
+                url,
+                headers={"Authorization": f"OAuth {self.token}"},
+                method="PUT",
+            )
             with urllib.request.urlopen(request, timeout=30) as response:
                 if response.status not in {200, 201, 202, 409}:
                     raise RuntimeError(f"Could not create Yandex Disk folder: HTTP {response.status}")
+
+        try:
+            _with_locked_retry(create_once)
         except urllib.error.HTTPError as exc:
             if exc.code == 409:
                 return
             raise RuntimeError(_http_error_message("Could not create Yandex Disk folder", exc)) from exc
+
+
+def _with_locked_retry(operation, attempts: int = 5, delay_seconds: float = 2.0):
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 423 or attempt == attempts:
+                raise
+            time.sleep(delay_seconds * attempt)
+    return None
 
 
 def _http_error_message(prefix: str, exc: urllib.error.HTTPError) -> str:
