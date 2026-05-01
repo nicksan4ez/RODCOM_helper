@@ -10,7 +10,7 @@ RUN adduser --disabled-password --gecos "" appuser
 
 COPY pyproject.toml ./
 COPY src ./src
-COPY "Список Дни Рождения.docx" ./
+COPY "List.docx" ./
 
 RUN mkdir -p /data && chown -R appuser:appuser /app /data
 
