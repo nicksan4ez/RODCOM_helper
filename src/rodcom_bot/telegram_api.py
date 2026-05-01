@@ -23,6 +23,7 @@ class TelegramClient:
         payload: dict[str, Any] = {
             "chat_id": str(chat_id),
             "text": text[:4096],
+            "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
         if reply_markup:

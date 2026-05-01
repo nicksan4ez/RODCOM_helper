@@ -15,6 +15,7 @@ from .docx_import import import_people_from_docx
 from .formatting import MONTHS_GENITIVE, format_date_ru
 from .reminders import ReminderService, format_events
 from .telegram_api import TelegramClient
+from .ui import done, error, h, help_text, main_menu_text, prompt, warn
 
 
 LOGGER = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ class RodcomBot:
                     self.telegram.send_message(chat_id, response, keyboard or main_menu_keyboard())
             return
         if not self._is_authorized(chat_id, user_id):
-            self.telegram.send_message(chat_id, "Команда доступна только администраторам родкома.")
+            self.telegram.send_message(chat_id, warn("Команда доступна только администраторам родкома."))
             return
 
         response = self._dispatch(text)
@@ -120,7 +121,7 @@ class RodcomBot:
         if chat_id is None or user_id is None:
             return
         if not self._is_authorized(chat_id, user_id):
-            self.telegram.send_message(chat_id, "Кнопки доступны только администраторам родкома.")
+            self.telegram.send_message(chat_id, warn("Кнопки доступны только администраторам родкома."))
             return
 
         response, keyboard = self._dispatch_callback(chat_id, user_id, data)
@@ -138,7 +139,7 @@ class RodcomBot:
 
         today = datetime.now(self.timezone).date()
         if command in {"/start", "/help"}:
-            return "Главное меню. Выберите действие кнопкой ниже.\n\n" + HELP_TEXT
+            return main_menu_text() + "\n\n" + help_text()
         if command == "/next":
             return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10))
         if command == "/today":
@@ -161,7 +162,7 @@ class RodcomBot:
             return self._settings()
         if command == "/test_reminder":
             return format_events("Тестовое напоминание", self.reminders.upcoming(today, limit=3))
-        return "Неизвестная команда.\n\n" + HELP_TEXT
+        return warn("Неизвестная команда.") + "\n\n" + help_text()
 
     def _dispatch_callback(
         self,
@@ -172,7 +173,7 @@ class RodcomBot:
         today = datetime.now(self.timezone).date()
         if data == "menu":
             self.db.clear_user_state(chat_id, user_id)
-            return "Главное меню. Выберите действие.", main_menu_keyboard()
+            return main_menu_text(), main_menu_keyboard()
         if data == "next":
             return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10)), main_menu_keyboard()
         if data == "today":
@@ -183,26 +184,26 @@ class RodcomBot:
             return self._settings(), main_menu_keyboard()
         if data == "add_child":
             self.db.set_user_state(chat_id, user_id, "add_name", json.dumps({"role": "child"}))
-            return "Добавление ребенка.\n\nВведите ФИО полностью, например: Иванова Анна", cancel_keyboard()
+            return prompt("Добавляем ребенка", "Введите ФИО полностью.", "Иванова Анна"), cancel_keyboard()
         if data == "add_teacher":
             self.db.set_user_state(chat_id, user_id, "add_name", json.dumps({"role": "teacher"}))
-            return "Добавление учителя.\n\nВведите ФИО полностью, например: Швоева Оксана Васильевна", cancel_keyboard()
+            return prompt("Добавляем учителя", "Введите ФИО полностью.", "Швоева Оксана Васильевна"), cancel_keyboard()
         if data == "edit":
             self.db.set_user_state(chat_id, user_id, "edit_choose_person")
-            return self._people() + "\n\nВведите номер записи, которую нужно изменить.", cancel_keyboard()
+            return self._people() + "\n\n✍️ Введите номер записи, которую нужно изменить.", cancel_keyboard()
         if data == "disable":
             self.db.set_user_state(chat_id, user_id, "disable_choose_person")
-            return self._people() + "\n\nВведите номер записи, которую нужно скрыть из напоминаний.", cancel_keyboard()
+            return self._people() + "\n\n🙈 Введите номер записи, которую нужно скрыть из напоминаний.", cancel_keyboard()
         if data == "restore":
             self.db.set_user_state(chat_id, user_id, "restore_choose_person")
-            return self._people() + "\n\nВведите номер записи, которую нужно вернуть в напоминания.", cancel_keyboard()
+            return self._people() + "\n\n🔄 Введите номер записи, которую нужно вернуть в напоминания.", cancel_keyboard()
         if data == "delete":
             self.db.set_user_state(chat_id, user_id, "delete_choose_person")
-            return self._people() + "\n\nВведите номер записи, которую нужно удалить из базы.", cancel_keyboard()
+            return self._people() + "\n\n🗑️ Введите номер записи, которую нужно удалить из базы.", cancel_keyboard()
         if data.startswith("edit_field:"):
             person_id = int(data.split(":", 1)[1])
             self.db.set_user_state(chat_id, user_id, "edit_choose_field", json.dumps({"person_id": person_id}))
-            return "Что изменить?", edit_field_keyboard(person_id)
+            return "✏️ <b>Что изменить?</b>", edit_field_keyboard(person_id)
         if data.startswith("field:"):
             _, person_id_text, field = data.split(":", 2)
             self.db.set_user_state(
@@ -212,18 +213,18 @@ class RodcomBot:
                 json.dumps({"person_id": int(person_id_text), "field": field}),
             )
             prompts = {
-                "name": "Введите новое ФИО полностью.",
-                "date": "Введите новую дату рождения в формате 22.12.2017 или 22.12.",
-                "role": "Введите роль: child для ребенка или teacher для учителя.",
-                "note": "Введите новое примечание. Чтобы очистить, отправьте один дефис: -",
+                "name": prompt("Новое ФИО", "Введите ФИО полностью.", "Иванова Анна"),
+                "date": prompt("Новая дата рождения", "Введите дату в формате ДД.ММ.ГГГГ. Год можно не указывать.", "22.12.2017"),
+                "role": prompt("Новая роль", "Введите: child для ребенка или teacher для учителя.", "child"),
+                "note": prompt("Новое примечание", "Введите примечание. Чтобы очистить, отправьте один дефис.", "-"),
             }
             return prompts[field], cancel_keyboard()
         if data.startswith("delete_confirm:"):
             person_id = int(data.split(":", 1)[1])
             self.db.clear_user_state(chat_id, user_id)
             deleted = self.db.delete_person(person_id)
-            return ("Удалено из базы." if deleted else "Не нашел человека с таким id."), main_menu_keyboard()
-        return "Не понял нажатие. Вернитесь в главное меню.", main_menu_keyboard()
+            return (done("Запись удалена из базы.") if deleted else error("Не нашел человека с таким номером.")), main_menu_keyboard()
+        return warn("Не понял нажатие. Вернитесь в главное меню."), main_menu_keyboard()
 
     def _handle_state_message(
         self,
@@ -235,7 +236,7 @@ class RodcomBot:
         if not row:
             return None
         if not text:
-            return "Отправьте текст или нажмите «Отмена».", cancel_keyboard()
+            return warn("Отправьте текст или нажмите «Отмена»."), cancel_keyboard()
 
         state = row["state"]
         payload = json.loads(row["payload"])
@@ -243,19 +244,19 @@ class RodcomBot:
         if state == "add_name":
             payload["name"] = text.strip()
             self.db.set_user_state(chat_id, user_id, "add_date", json.dumps(payload, ensure_ascii=False))
-            return "Введите дату рождения в формате 22.12.2017 или 22.12.", cancel_keyboard()
+            return prompt("Дата рождения", "Введите дату в формате ДД.ММ.ГГГГ. Год можно не указывать.", "22.12.2017"), cancel_keyboard()
 
         if state == "add_date":
             parsed = _parse_birth_date(text)
             if not parsed:
-                return "Дата должна быть в формате 22.12.2017 или 22.12. Попробуйте еще раз.", cancel_keyboard()
+                return warn("Дата должна быть в формате 22.12.2017 или 22.12. Попробуйте еще раз."), cancel_keyboard()
             day, month, year = parsed
             date_error = _validate_birth_date(day, month, year)
             if date_error:
-                return date_error, cancel_keyboard()
+                return warn(date_error), cancel_keyboard()
             payload.update({"day": day, "month": month, "year": year})
             self.db.set_user_state(chat_id, user_id, "add_note", json.dumps(payload, ensure_ascii=False))
-            return "Введите примечание, например аллергию. Если примечания нет, отправьте один дефис: -", cancel_keyboard()
+            return prompt("Примечание", "Введите аллергию или другую важную пометку. Если примечания нет, отправьте один дефис.", "Аллергия на мед"), cancel_keyboard()
 
         if state == "add_note":
             note = "" if text.strip() == "-" else text.strip()
@@ -271,16 +272,16 @@ class RodcomBot:
             except Exception as exc:
                 LOGGER.exception("Could not add person")
                 self.db.clear_user_state(chat_id, user_id)
-                return f"Не удалось добавить запись: {exc}", main_menu_keyboard()
+                return error(f"Не удалось добавить запись: {h(exc)}"), main_menu_keyboard()
             self.db.clear_user_state(chat_id, user_id)
-            return f"Готово. Добавлена запись id {person_id}: {payload['name']}.", main_menu_keyboard()
+            return done(f"Добавлена запись <code>{person_id}</code>: <b>{h(payload['name'])}</b>."), main_menu_keyboard()
 
         if state == "edit_choose_person":
             person_id = _parse_person_id(text)
             if person_id is None:
-                return "Введите только номер из списка, например: 12", cancel_keyboard()
+                return warn("Введите только номер из списка, например: 12"), cancel_keyboard()
             self.db.set_user_state(chat_id, user_id, "edit_choose_field", json.dumps({"person_id": person_id}))
-            return "Что изменить? Нажмите кнопку ниже.", edit_field_keyboard(person_id)
+            return "✏️ <b>Что изменить?</b>\n\nНажмите нужную кнопку.", edit_field_keyboard(person_id)
 
         if state == "edit_value":
             person_id = int(payload["person_id"])
@@ -292,44 +293,44 @@ class RodcomBot:
         if state == "disable_choose_person":
             person_id = _parse_person_id(text)
             if person_id is None:
-                return "Введите только номер из списка, например: 12", cancel_keyboard()
+                return warn("Введите только номер из списка, например: 12"), cancel_keyboard()
             self.db.clear_user_state(chat_id, user_id)
-            return ("Отключено." if self.db.disable_person(person_id) else "Не нашел человека с таким id."), main_menu_keyboard()
+            return (done("Запись скрыта из напоминаний.") if self.db.disable_person(person_id) else error("Не нашел человека с таким номером.")), main_menu_keyboard()
 
         if state == "restore_choose_person":
             person_id = _parse_person_id(text)
             if person_id is None:
-                return "Введите только номер из списка, например: 12", cancel_keyboard()
+                return warn("Введите только номер из списка, например: 12"), cancel_keyboard()
             self.db.clear_user_state(chat_id, user_id)
-            return ("Включено." if self.db.restore_person(person_id) else "Не нашел человека с таким id."), main_menu_keyboard()
+            return (done("Запись снова участвует в напоминаниях.") if self.db.restore_person(person_id) else error("Не нашел человека с таким номером.")), main_menu_keyboard()
 
         if state == "delete_choose_person":
             person_id = _parse_person_id(text)
             if person_id is None:
-                return "Введите только номер из списка, например: 12", cancel_keyboard()
+                return warn("Введите только номер из списка, например: 12"), cancel_keyboard()
             self.db.set_user_state(chat_id, user_id, "delete_confirm", json.dumps({"person_id": person_id}))
-            return "Удалить запись полностью? Это нельзя отменить.", delete_confirm_keyboard(person_id)
+            return "🗑️ <b>Удалить запись полностью?</b>\n\nЭто действие нельзя отменить.", delete_confirm_keyboard(person_id)
 
         return None
 
     def _month(self, rest: str, today: date) -> str:
         month = int(rest) if rest.isdigit() else today.month
         if not 1 <= month <= 12:
-            return "Месяц должен быть числом от 1 до 12."
+            return warn("Месяц должен быть числом от 1 до 12.")
         events = self.reminders.events_for_month(today.year, month)
         return format_events(f"Дни рождения: {MONTHS_GENITIVE[month]} {today.year}", events)
 
     def _people(self) -> str:
         people = self.db.list_people(active_only=False)
-        lines = ["Список людей:"]
+        lines = ["👥 <b>Список людей</b>\n"]
         for person in people:
-            role = "учитель" if person.role == "teacher" else "ученик"
-            status = "" if person.active else " [отключен]"
+            role = "👩‍🏫 учитель" if person.role == "teacher" else "🎒 ученик"
+            status = "" if person.active else " · 🙈 скрыт"
             year = f".{person.birth_year}" if person.birth_year else ""
-            note = f" — {person.note}" if person.note else ""
+            note = f"\n   📝 {h(person.note)}" if person.note else ""
             lines.append(
-                f"{person.id}. {person.full_name} ({role}) — "
-                f"{person.birth_day:02d}.{person.birth_month:02d}{year}"
+                f"<code>{person.id}</code> · <b>{h(person.full_name)}</b>\n"
+                f"   {role} · 🎂 {person.birth_day:02d}.{person.birth_month:02d}{year}"
                 f"{status}{note}"
             )
         return "\n".join(lines)
@@ -342,13 +343,13 @@ class RodcomBot:
             rest,
         )
         if not match:
-            return "Формат: /add child 22.12.2017 Фамилия Имя | примечание"
+            return warn("Формат: /add child 22.12.2017 Фамилия Имя | примечание")
         day = int(match.group("day"))
         month = int(match.group("month"))
         year = int(match.group("year")) if match.group("year") else None
         date_error = _validate_birth_date(day, month, year)
         if date_error:
-            return date_error
+            return warn(date_error)
         try:
             person_id = self.db.add_person(
                 full_name=match.group("name").strip(),
@@ -360,18 +361,18 @@ class RodcomBot:
             )
         except Exception as exc:
             LOGGER.exception("Could not add person")
-            return f"Не удалось добавить запись: {exc}"
-        return f"Добавлено: id {person_id}."
+            return error(f"Не удалось добавить запись: {h(exc)}")
+        return done(f"Добавлена запись <code>{person_id}</code>.")
 
     def _edit(self, rest: str) -> str:
         match = re.match(r"(?P<id>\d+)\s+(?P<field>name|date|role|note)\s*(?P<value>.*)$", rest)
         if not match:
-            return (
+            return warn(
                 "Форматы:\n"
-                "/edit 12 name Новая Фамилия Имя\n"
-                "/edit 12 date 22.12.2017\n"
-                "/edit 12 role child\n"
-                "/edit 12 note Аллергия на ..."
+                "<code>/edit 12 name Новая Фамилия Имя</code>\n"
+                "<code>/edit 12 date 22.12.2017</code>\n"
+                "<code>/edit 12 role child</code>\n"
+                "<code>/edit 12 note Аллергия на ...</code>"
             )
         person_id = int(match.group("id"))
         field = match.group("field")
@@ -380,131 +381,116 @@ class RodcomBot:
         try:
             if field == "name":
                 if not value:
-                    return "ФИО не должно быть пустым."
+                    return warn("ФИО не должно быть пустым.")
                 updated = self.db.update_person_field(person_id, "full_name", value)
             elif field == "role":
                 if value not in {"child", "teacher"}:
-                    return "Роль должна быть child или teacher."
+                    return warn("Роль должна быть child или teacher.")
                 updated = self.db.update_person_field(person_id, "role", value)
             elif field == "note":
                 updated = self.db.update_person_field(person_id, "note", value)
             else:
                 parsed = _parse_birth_date(value)
                 if not parsed:
-                    return "Дата должна быть в формате 22.12 или 22.12.2017."
+                    return warn("Дата должна быть в формате 22.12 или 22.12.2017.")
                 day, month, year = parsed
                 date_error = _validate_birth_date(day, month, year)
                 if date_error:
-                    return date_error
+                    return warn(date_error)
                 updated_day = self.db.update_person_field(person_id, "birth_day", day)
                 self.db.update_person_field(person_id, "birth_month", month)
                 self.db.update_person_field(person_id, "birth_year", year)
                 updated = updated_day
         except Exception as exc:
             LOGGER.exception("Could not edit person")
-            return f"Не удалось обновить запись: {exc}"
-        return "Обновлено." if updated else "Не нашел человека с таким id."
+            return error(f"Не удалось обновить запись: {h(exc)}")
+        return done("Данные обновлены.") if updated else error("Не нашел человека с таким номером.")
 
     def _apply_field_update(self, person_id: int, field: str, value: str) -> tuple[bool, str]:
         value = value.strip()
         try:
             if field == "name":
                 if not value:
-                    return False, "ФИО не должно быть пустым."
+                    return False, warn("ФИО не должно быть пустым.")
                 updated = self.db.update_person_field(person_id, "full_name", value)
             elif field == "role":
                 if value not in {"child", "teacher"}:
-                    return False, "Роль должна быть child или teacher."
+                    return False, warn("Роль должна быть child или teacher.")
                 updated = self.db.update_person_field(person_id, "role", value)
             elif field == "note":
                 updated = self.db.update_person_field(person_id, "note", "" if value == "-" else value)
             elif field == "date":
                 parsed = _parse_birth_date(value)
                 if not parsed:
-                    return False, "Дата должна быть в формате 22.12 или 22.12.2017."
+                    return False, warn("Дата должна быть в формате 22.12 или 22.12.2017.")
                 day, month, year = parsed
                 date_error = _validate_birth_date(day, month, year)
                 if date_error:
-                    return False, date_error
+                    return False, warn(date_error)
                 updated = self.db.update_person_field(person_id, "birth_day", day)
                 self.db.update_person_field(person_id, "birth_month", month)
                 self.db.update_person_field(person_id, "birth_year", year)
             else:
-                return False, "Неизвестное поле."
+                return False, error("Неизвестное поле.")
         except Exception as exc:
             LOGGER.exception("Could not update field")
-            return False, f"Не удалось обновить запись: {exc}"
-        return updated, "Готово. Данные обновлены." if updated else "Не нашел человека с таким id."
+            return False, error(f"Не удалось обновить запись: {h(exc)}")
+        return updated, done("Данные обновлены.") if updated else error("Не нашел человека с таким номером.")
 
     def _disable(self, rest: str) -> str:
         if not rest.isdigit():
-            return "Формат: /disable 12"
+            return warn("Формат: /disable 12")
         disabled = self.db.disable_person(int(rest))
-        return "Отключено." if disabled else "Не нашел человека с таким id."
+        return done("Запись скрыта из напоминаний.") if disabled else error("Не нашел человека с таким номером.")
 
     def _restore(self, rest: str) -> str:
         if not rest.isdigit():
-            return "Формат: /restore 12"
+            return warn("Формат: /restore 12")
         restored = self.db.restore_person(int(rest))
-        return "Включено." if restored else "Не нашел человека с таким id."
+        return done("Запись снова участвует в напоминаниях.") if restored else error("Не нашел человека с таким номером.")
 
     def _delete(self, rest: str) -> str:
         if not rest.isdigit():
-            return "Формат: /delete 12"
+            return warn("Формат: /delete 12")
         deleted = self.db.delete_person(int(rest))
-        return "Удалено из базы." if deleted else "Не нашел человека с таким id."
+        return done("Запись удалена из базы.") if deleted else error("Не нашел человека с таким номером.")
 
     def _settings(self) -> str:
         return (
-            "Настройки:\n"
-            f"Чат: {self.config.admin_chat_id}\n"
-            f"Время проверки: {self.config.check_time}\n"
-            f"Часовой пояс: {self.config.timezone}\n"
-            f"База: {self.config.database_path}\n"
-            f"Сегодня: {format_date_ru(datetime.now(self.timezone).date())}"
+            "⚙️ <b>Настройки</b>\n\n"
+            f"💬 Чат: <code>{h(self.config.admin_chat_id)}</code>\n"
+            f"⏰ Проверка: <b>{h(self.config.check_time)}</b>\n"
+            f"🌏 Часовой пояс: <code>{h(self.config.timezone)}</code>\n"
+            f"🗄️ База: <code>{h(self.config.database_path)}</code>\n"
+            f"📅 Сегодня: {h(format_date_ru(datetime.now(self.timezone).date()))}"
         )
 
 
-HELP_TEXT = """Команды:
-/next — ближайшие дни рождения
-/month [1-12] — дни рождения за месяц
-/today — напоминания, которые должны уйти сегодня
-/people — список людей и id
-/add child 22.12.2017 Фамилия Имя | примечание — добавить ребенка
-/add teacher 18.08 Фамилия Имя — добавить учителя
-/edit 12 name Новая Фамилия Имя — изменить ФИО
-/edit 12 date 22.12.2017 — изменить дату рождения
-/edit 12 role child — изменить роль child/teacher
-/edit 12 note Аллергия на ... — изменить или очистить примечание
-/disable 12 — скрыть из напоминаний
-/restore 12 — вернуть в напоминания
-/delete 12 — удалить из базы
-/settings — настройки
-/test_reminder — пример сообщения"""
+HELP_TEXT = help_text()
 
 
 def main_menu_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "Ближайшие ДР", "callback_data": "next"},
-                {"text": "Сегодня", "callback_data": "today"},
+                {"text": "🎂 Ближайшие ДР", "callback_data": "next"},
+                {"text": "🔔 Сегодня", "callback_data": "today"},
             ],
             [
-                {"text": "Список", "callback_data": "people"},
-                {"text": "Настройки", "callback_data": "settings"},
+                {"text": "👥 Список", "callback_data": "people"},
+                {"text": "⚙️ Настройки", "callback_data": "settings"},
             ],
             [
-                {"text": "Добавить ребенка", "callback_data": "add_child"},
-                {"text": "Добавить учителя", "callback_data": "add_teacher"},
+                {"text": "➕ Ребенок", "callback_data": "add_child"},
+                {"text": "➕ Учитель", "callback_data": "add_teacher"},
             ],
             [
-                {"text": "Изменить", "callback_data": "edit"},
-                {"text": "Скрыть", "callback_data": "disable"},
+                {"text": "✏️ Изменить", "callback_data": "edit"},
+                {"text": "🙈 Скрыть", "callback_data": "disable"},
             ],
             [
-                {"text": "Вернуть", "callback_data": "restore"},
-                {"text": "Удалить", "callback_data": "delete"},
+                {"text": "🔄 Вернуть", "callback_data": "restore"},
+                {"text": "🗑️ Удалить", "callback_data": "delete"},
             ],
         ]
     }
@@ -514,10 +500,10 @@ def people_menu_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "Добавить", "callback_data": "add_child"},
-                {"text": "Изменить", "callback_data": "edit"},
+                {"text": "➕ Добавить", "callback_data": "add_child"},
+                {"text": "✏️ Изменить", "callback_data": "edit"},
             ],
-            [{"text": "Главное меню", "callback_data": "menu"}],
+            [{"text": "🏠 Главное меню", "callback_data": "menu"}],
         ]
     }
 
@@ -526,27 +512,27 @@ def edit_field_keyboard(person_id: int) -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "ФИО", "callback_data": f"field:{person_id}:name"},
-                {"text": "Дата", "callback_data": f"field:{person_id}:date"},
+                {"text": "👤 ФИО", "callback_data": f"field:{person_id}:name"},
+                {"text": "🎂 Дата", "callback_data": f"field:{person_id}:date"},
             ],
             [
-                {"text": "Роль", "callback_data": f"field:{person_id}:role"},
-                {"text": "Примечание", "callback_data": f"field:{person_id}:note"},
+                {"text": "🏷️ Роль", "callback_data": f"field:{person_id}:role"},
+                {"text": "📝 Примечание", "callback_data": f"field:{person_id}:note"},
             ],
-            [{"text": "Отмена", "callback_data": "menu"}],
+            [{"text": "↩️ Отмена", "callback_data": "menu"}],
         ]
     }
 
 
 def cancel_keyboard() -> dict:
-    return {"inline_keyboard": [[{"text": "Отмена", "callback_data": "menu"}]]}
+    return {"inline_keyboard": [[{"text": "↩️ Отмена", "callback_data": "menu"}]]}
 
 
 def delete_confirm_keyboard(person_id: int) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "Да, удалить", "callback_data": f"delete_confirm:{person_id}"}],
-            [{"text": "Отмена", "callback_data": "menu"}],
+            [{"text": "🗑️ Да, удалить", "callback_data": f"delete_confirm:{person_id}"}],
+            [{"text": "↩️ Отмена", "callback_data": "menu"}],
         ]
     }
 

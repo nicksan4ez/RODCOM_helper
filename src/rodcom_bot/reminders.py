@@ -6,6 +6,7 @@ from datetime import date
 from .calendar_ru import WorkCalendar, celebration_date, next_birthday_date, reminder_date
 from .db import Database, Person
 from .formatting import age_on, format_date_ru
+from .ui import h
 
 
 @dataclass(frozen=True)
@@ -66,21 +67,21 @@ class ReminderService:
 
 def format_event(event: ReminderEvent) -> str:
     person = event.person
-    role = "учитель" if person.role == "teacher" else "ученик"
+    role = "👩‍🏫 учитель" if person.role == "teacher" else "🎒 ученик"
     age = age_on(person.birth_year, event.birthday)
-    age_text = f", исполнится {age}" if age is not None else ""
-    note = f"\n   Примечание: {person.note}" if person.note else ""
+    age_text = f" · исполнится {age}" if age is not None else ""
+    note = f"\n   📝 {h(person.note)}" if person.note else ""
     return (
-        f"• {person.full_name} ({role}{age_text})\n"
-        f"   ДР: {format_date_ru(event.birthday)}\n"
-        f"   Поздравить: {format_date_ru(event.celebration)}\n"
-        f"   Напомнить: {format_date_ru(event.reminder)}"
+        f"🎂 <b>{h(person.full_name)}</b>\n"
+        f"   {role}{age_text}\n"
+        f"   📅 ДР: {h(format_date_ru(event.birthday))}\n"
+        f"   🎁 Поздравить: <b>{h(format_date_ru(event.celebration))}</b>\n"
+        f"   🔔 Напомнить: {h(format_date_ru(event.reminder))}"
         f"{note}"
     )
 
 
 def format_events(title: str, events: list[ReminderEvent]) -> str:
     if not events:
-        return f"{title}\n\nНет событий."
-    return title + "\n\n" + "\n\n".join(format_event(event) for event in events)
-
+        return f"📭 <b>{h(title)}</b>\n\nНет событий."
+    return f"📌 <b>{h(title)}</b>\n\n" + "\n\n".join(format_event(event) for event in events)
