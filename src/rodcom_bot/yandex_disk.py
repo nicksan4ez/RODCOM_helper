@@ -29,6 +29,14 @@ class YandexDiskClient:
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Yandex Disk upload failed", exc)) from exc
 
+    def publish_resource(self, disk_path: str) -> str:
+        self._publish_resource(disk_path)
+        metadata = self._get_resource_metadata(disk_path)
+        public_url = metadata.get("public_url")
+        if not public_url:
+            raise RuntimeError("Yandex Disk did not return a public URL")
+        return str(public_url)
+
     def _get_upload_url(self, disk_path: str, overwrite: bool) -> str:
         query = urllib.parse.urlencode({"path": disk_path, "overwrite": str(overwrite).lower()})
         url = f"https://cloud-api.yandex.net/v1/disk/resources/upload?{query}"
@@ -62,18 +70,10 @@ class YandexDiskClient:
                 self._create_dir(current)
 
     def _resource_exists(self, disk_path: str) -> bool:
-        query = urllib.parse.urlencode({"path": disk_path})
-        url = f"https://cloud-api.yandex.net/v1/disk/resources?{query}"
-
         def exists_once() -> bool:
-            request = urllib.request.Request(
-                url,
-                headers={"Authorization": f"OAuth {self.token}"},
-                method="GET",
-            )
             try:
-                with urllib.request.urlopen(request, timeout=30):
-                    return True
+                self._get_resource_metadata(disk_path)
+                return True
             except urllib.error.HTTPError as exc:
                 if exc.code == 404:
                     return False
@@ -104,6 +104,42 @@ class YandexDiskClient:
             if exc.code == 409:
                 return
             raise RuntimeError(_http_error_message("Could not create Yandex Disk folder", exc)) from exc
+
+    def _publish_resource(self, disk_path: str) -> None:
+        query = urllib.parse.urlencode({"path": disk_path})
+        url = f"https://cloud-api.yandex.net/v1/disk/resources/publish?{query}"
+
+        def publish_once() -> None:
+            request = urllib.request.Request(
+                url,
+                headers={"Authorization": f"OAuth {self.token}"},
+                method="PUT",
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                if response.status not in {200, 201, 202, 409}:
+                    raise RuntimeError(f"Could not publish Yandex Disk file: HTTP {response.status}")
+
+        try:
+            _with_locked_retry(publish_once)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                return
+            raise RuntimeError(_http_error_message("Could not publish Yandex Disk file", exc)) from exc
+
+    def _get_resource_metadata(self, disk_path: str) -> dict:
+        query = urllib.parse.urlencode({"path": disk_path})
+        url = f"https://cloud-api.yandex.net/v1/disk/resources?{query}"
+
+        def get_once() -> dict:
+            request = urllib.request.Request(
+                url,
+                headers={"Authorization": f"OAuth {self.token}"},
+                method="GET",
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        return _with_locked_retry(get_once)
 
 
 def _with_locked_retry(operation, attempts: int = 5, delay_seconds: float = 2.0):

@@ -634,13 +634,16 @@ class RodcomBot:
         disk_path = _report_disk_path(self.config.yandex_disk_report_path)
         try:
             build_collections_report(self.db, report_path)
-            YandexDiskClient(self.config.yandex_disk_token).upload_file(report_path, disk_path)
+            yandex_disk = YandexDiskClient(self.config.yandex_disk_token)
+            yandex_disk.upload_file(report_path, disk_path)
+            public_url = yandex_disk.publish_resource(_report_folder_path(disk_path))
         except Exception as exc:
             LOGGER.exception("Could not update Yandex Disk collections report")
             return error(f"Не удалось обновить отчет: {h(exc)}")
         return done(
             "Отчет по сборам обновлен на Яндекс.Диске.\n\n"
-            f"Файл: <code>{h(disk_path)}</code>"
+            f"Файл: <code>{h(disk_path)}</code>\n"
+            f"🔗 Доступен по ссылке: {h(public_url)}"
         )
 
     def _collection_detail(self, collection_id: int) -> str:
@@ -903,3 +906,8 @@ def _report_disk_path(value: str) -> str:
     if not value.lower().endswith(".xlsx"):
         return value + "/sbori_report.xlsx"
     return value
+
+
+def _report_folder_path(disk_path: str) -> str:
+    folder = disk_path.rstrip("/").rsplit("/", 1)[0]
+    return folder or "/"
