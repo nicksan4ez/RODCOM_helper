@@ -1,0 +1,10 @@
+[project]
+name = "rodcom-helper"
+version = "0.1.0"
+description = "Telegram birthday reminder bot for a parent committee"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
