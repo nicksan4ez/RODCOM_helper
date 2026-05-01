@@ -25,17 +25,20 @@ class YandexDiskClient:
                     raise RuntimeError(f"Yandex Disk upload failed with status {response.status}")
 
         try:
-            _with_locked_retry(upload_once)
+            _with_locked_retry(upload_once, attempts=8, delay_seconds=3.0)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Yandex Disk upload failed", exc)) from exc
 
     def publish_resource(self, disk_path: str) -> str:
+        public_url = self._public_url(disk_path)
+        if public_url:
+            return public_url
+
         self._publish_resource(disk_path)
-        metadata = self._get_resource_metadata(disk_path)
-        public_url = metadata.get("public_url")
-        if not public_url:
-            raise RuntimeError("Yandex Disk did not return a public URL")
-        return str(public_url)
+        public_url = self._wait_for_public_url(disk_path)
+        if public_url:
+            return public_url
+        raise RuntimeError("Yandex Disk did not return a public URL")
 
     def _get_upload_url(self, disk_path: str, overwrite: bool) -> str:
         query = urllib.parse.urlencode({"path": disk_path, "overwrite": str(overwrite).lower()})
@@ -51,7 +54,7 @@ class YandexDiskClient:
                 return json.loads(response.read().decode("utf-8"))
 
         try:
-            payload = _with_locked_retry(get_once)
+            payload = _with_locked_retry(get_once, attempts=8, delay_seconds=3.0)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Could not get Yandex Disk upload URL", exc)) from exc
         href = payload.get("href")
@@ -80,7 +83,7 @@ class YandexDiskClient:
                 raise
 
         try:
-            return _with_locked_retry(exists_once)
+            return _with_locked_retry(exists_once, attempts=8, delay_seconds=3.0)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(_http_error_message("Could not check Yandex Disk folder", exc)) from exc
 
@@ -99,7 +102,7 @@ class YandexDiskClient:
                     raise RuntimeError(f"Could not create Yandex Disk folder: HTTP {response.status}")
 
         try:
-            _with_locked_retry(create_once)
+            _with_locked_retry(create_once, attempts=8, delay_seconds=3.0)
         except urllib.error.HTTPError as exc:
             if exc.code == 409:
                 return
@@ -120,11 +123,29 @@ class YandexDiskClient:
                     raise RuntimeError(f"Could not publish Yandex Disk file: HTTP {response.status}")
 
         try:
-            _with_locked_retry(publish_once)
+            _with_locked_retry(publish_once, attempts=10, delay_seconds=5.0)
         except urllib.error.HTTPError as exc:
             if exc.code == 409:
                 return
             raise RuntimeError(_http_error_message("Could not publish Yandex Disk file", exc)) from exc
+
+    def _public_url(self, disk_path: str) -> str | None:
+        metadata = self._get_resource_metadata(disk_path)
+        public_url = metadata.get("public_url")
+        return str(public_url) if public_url else None
+
+    def _wait_for_public_url(
+        self,
+        disk_path: str,
+        attempts: int = 8,
+        delay_seconds: float = 2.0,
+    ) -> str | None:
+        for attempt in range(1, attempts + 1):
+            public_url = self._public_url(disk_path)
+            if public_url:
+                return public_url
+            time.sleep(delay_seconds * attempt)
+        return None
 
     def _get_resource_metadata(self, disk_path: str) -> dict:
         query = urllib.parse.urlencode({"path": disk_path})
@@ -139,7 +160,7 @@ class YandexDiskClient:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return json.loads(response.read().decode("utf-8"))
 
-        return _with_locked_retry(get_once)
+        return _with_locked_retry(get_once, attempts=8, delay_seconds=3.0)
 
 
 def _with_locked_retry(operation, attempts: int = 5, delay_seconds: float = 2.0):
