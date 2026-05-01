@@ -33,18 +33,34 @@ class RodcomBot:
         self._stop = threading.Event()
 
     def bootstrap(self) -> None:
-        if not self.db.list_people(active_only=False):
+        LOGGER.info("Starting RODCOM bot")
+        LOGGER.info("Database path: %s", self.config.database_path)
+        LOGGER.info("Timezone: %s, default daily check time: %s", self.config.timezone, self.config.check_time)
+
+        people_before_import = self.db.list_people(active_only=False)
+        if not people_before_import:
+            LOGGER.info("Database is empty, importing initial people from %s", self.config.source_docx_path)
             people = import_people_from_docx(self.config.source_docx_path)
             inserted = self.db.seed_people(people)
             LOGGER.info("Imported %s people from %s", inserted, self.config.source_docx_path)
+        else:
+            LOGGER.info("Database already contains %s people, skipping DOCX import", len(people_before_import))
+
         self.db.set_setting("timezone", self.config.timezone)
-        self.db.set_setting("check_time", self.config.check_time)
+        if self.db.get_setting("check_time") is None:
+            self.db.set_setting("check_time", self.config.check_time)
         self.db.set_setting("admin_chat_id", self.config.admin_chat_id)
+        active_count = len(self.db.list_people(active_only=True))
+        total_count = len(self.db.list_people(active_only=False))
+        LOGGER.info("People in database: %s active, %s total", active_count, total_count)
+        LOGGER.info("Active daily check time: %s", self._check_time())
 
     def run(self) -> None:
         self.bootstrap()
         scheduler = threading.Thread(target=self._scheduler_loop, daemon=True)
         scheduler.start()
+        LOGGER.info("Scheduler started")
+        LOGGER.info("Telegram polling started")
         self._poll_loop()
 
     def _scheduler_loop(self) -> None:
@@ -52,7 +68,7 @@ class RodcomBot:
         while not self._stop.is_set():
             now = datetime.now(self.timezone)
             today_key = now.date().isoformat()
-            if now.strftime("%H:%M") == self.config.check_time and last_run != today_key:
+            if now.strftime("%H:%M") == self._check_time() and last_run != today_key:
                 try:
                     self.send_due_reminders(now.date())
                     last_run = today_key
@@ -147,7 +163,7 @@ class RodcomBot:
         if command == "/month":
             return self._month(rest, today)
         if command == "/people":
-            return self._people()
+            return self._people(sort_by="name")
         if command == "/add":
             return self._add(rest)
         if command == "/edit":
@@ -179,9 +195,16 @@ class RodcomBot:
         if data == "today":
             return format_events("Напоминания на сегодня", self.reminders.due_today(today)), main_menu_keyboard()
         if data == "people":
-            return self._people(), people_menu_keyboard()
+            return self._people(sort_by="name"), people_menu_keyboard(active_sort="name")
+        if data == "people_birthdays":
+            return self._people(sort_by="birthday"), people_menu_keyboard(active_sort="birthday")
+        if data == "people_name":
+            return self._people(sort_by="name"), people_menu_keyboard(active_sort="name")
         if data == "settings":
-            return self._settings(), main_menu_keyboard()
+            return self._settings(), settings_keyboard()
+        if data == "settings_time":
+            self.db.set_user_state(chat_id, user_id, "settings_time")
+            return prompt("Время напоминаний", "Введите время ежедневной проверки в формате ЧЧ:ММ.", "07:30"), cancel_keyboard()
         if data == "add_child":
             self.db.set_user_state(chat_id, user_id, "add_name", json.dumps({"role": "child"}))
             return prompt("Добавляем ребенка", "Введите ФИО полностью.", "Иванова Анна"), cancel_keyboard()
@@ -190,16 +213,16 @@ class RodcomBot:
             return prompt("Добавляем учителя", "Введите ФИО полностью.", "Швоева Оксана Васильевна"), cancel_keyboard()
         if data == "edit":
             self.db.set_user_state(chat_id, user_id, "edit_choose_person")
-            return self._people() + "\n\n✍️ Введите номер записи, которую нужно изменить.", cancel_keyboard()
+            return self._people(sort_by="name") + "\n\n✍️ Введите номер записи, которую нужно изменить.", cancel_keyboard()
         if data == "disable":
             self.db.set_user_state(chat_id, user_id, "disable_choose_person")
-            return self._people() + "\n\n🙈 Введите номер записи, которую нужно скрыть из напоминаний.", cancel_keyboard()
+            return self._people(sort_by="name") + "\n\n🙈 Введите номер записи, которую нужно скрыть из напоминаний.", cancel_keyboard()
         if data == "restore":
             self.db.set_user_state(chat_id, user_id, "restore_choose_person")
-            return self._people() + "\n\n🔄 Введите номер записи, которую нужно вернуть в напоминания.", cancel_keyboard()
+            return self._people(sort_by="name") + "\n\n🔄 Введите номер записи, которую нужно вернуть в напоминания.", cancel_keyboard()
         if data == "delete":
             self.db.set_user_state(chat_id, user_id, "delete_choose_person")
-            return self._people() + "\n\n🗑️ Введите номер записи, которую нужно удалить из базы.", cancel_keyboard()
+            return self._people(sort_by="name") + "\n\n🗑️ Введите номер записи, которую нужно удалить из базы.", cancel_keyboard()
         if data.startswith("edit_field:"):
             person_id = int(data.split(":", 1)[1])
             self.db.set_user_state(chat_id, user_id, "edit_choose_field", json.dumps({"person_id": person_id}))
@@ -311,6 +334,15 @@ class RodcomBot:
             self.db.set_user_state(chat_id, user_id, "delete_confirm", json.dumps({"person_id": person_id}))
             return "🗑️ <b>Удалить запись полностью?</b>\n\nЭто действие нельзя отменить.", delete_confirm_keyboard(person_id)
 
+        if state == "settings_time":
+            parsed_time = _parse_time(text)
+            if parsed_time is None:
+                return warn("Введите время в формате ЧЧ:ММ, например 07:30."), cancel_keyboard()
+            self.db.set_setting("check_time", parsed_time)
+            self.db.clear_user_state(chat_id, user_id)
+            LOGGER.info("Daily check time changed to %s", parsed_time)
+            return done(f"Время напоминаний изменено на <b>{h(parsed_time)}</b>."), settings_keyboard()
+
         return None
 
     def _month(self, rest: str, today: date) -> str:
@@ -320,19 +352,23 @@ class RodcomBot:
         events = self.reminders.events_for_month(today.year, month)
         return format_events(f"Дни рождения: {MONTHS_GENITIVE[month]} {today.year}", events)
 
-    def _people(self) -> str:
+    def _people(self, sort_by: str = "name") -> str:
         people = self.db.list_people(active_only=False)
-        lines = ["👥 <b>Список людей</b>\n"]
-        for person in people:
-            role = "👩‍🏫 учитель" if person.role == "teacher" else "🎒 ученик"
-            status = "" if person.active else " · 🙈 скрыт"
-            year = f".{person.birth_year}" if person.birth_year else ""
-            note = f"\n   📝 {h(person.note)}" if person.note else ""
-            lines.append(
-                f"<code>{person.id}</code> · <b>{h(person.full_name)}</b>\n"
-                f"   {role} · 🎂 {person.birth_day:02d}.{person.birth_month:02d}{year}"
-                f"{status}{note}"
-            )
+        teachers = [person for person in people if person.role == "teacher"]
+        students = [person for person in people if person.role != "teacher"]
+        teachers = _sort_people(teachers, sort_by)
+        students = _sort_people(students, sort_by)
+
+        sort_label = "по ФИО" if sort_by == "name" else "по дате рождения"
+        lines = [f"👥 <b>Список класса</b>\nСортировка: <b>{h(sort_label)}</b>"]
+        if teachers:
+            lines.append("\n👩‍🏫 <b>Учитель</b>")
+            lines.extend(_format_person_line(person) for person in teachers)
+        if students:
+            lines.append("\n🎒 <b>Ученики</b>")
+            lines.extend(_format_person_line(person) for person in students)
+        if not people:
+            lines.append("\nСписок пока пуст.")
         return "\n".join(lines)
 
     def _add(self, rest: str) -> str:
@@ -458,12 +494,31 @@ class RodcomBot:
     def _settings(self) -> str:
         return (
             "⚙️ <b>Настройки</b>\n\n"
-            f"💬 Чат: <code>{h(self.config.admin_chat_id)}</code>\n"
-            f"⏰ Проверка: <b>{h(self.config.check_time)}</b>\n"
+            f"⏰ Время напоминаний: <b>{h(self._check_time())}</b>\n"
             f"🌏 Часовой пояс: <code>{h(self.config.timezone)}</code>\n"
-            f"🗄️ База: <code>{h(self.config.database_path)}</code>\n"
             f"📅 Сегодня: {h(format_date_ru(datetime.now(self.timezone).date()))}"
         )
+
+    def _check_time(self) -> str:
+        return self.db.get_setting("check_time", self.config.check_time) or self.config.check_time
+
+
+def _sort_people(people, sort_by: str):
+    if sort_by == "birthday":
+        return sorted(people, key=lambda person: (person.birth_month, person.birth_day, person.full_name.lower()))
+    return sorted(people, key=lambda person: person.full_name.lower())
+
+
+def _format_person_line(person) -> str:
+    role = "👩‍🏫 учитель" if person.role == "teacher" else "🎒 ученик"
+    status = "" if person.active else " · 🙈 скрыт"
+    year = f".{person.birth_year}" if person.birth_year else ""
+    note = f"\n   📝 {h(person.note)}" if person.note else ""
+    return (
+        f"<code>{person.id}</code> · <b>{h(person.full_name)}</b>\n"
+        f"   {role} · 🎂 {person.birth_day:02d}.{person.birth_month:02d}{year}"
+        f"{status}{note}"
+    )
 
 
 HELP_TEXT = help_text()
@@ -480,6 +535,19 @@ def main_menu_keyboard() -> dict:
                 {"text": "👥 Список", "callback_data": "people"},
                 {"text": "⚙️ Настройки", "callback_data": "settings"},
             ],
+        ]
+    }
+
+
+def people_menu_keyboard(active_sort: str = "name") -> dict:
+    name_text = "☑️ По ФИО" if active_sort == "name" else "⬜️ По ФИО"
+    birthday_text = "☑️ По ДР" if active_sort == "birthday" else "⬜️ По ДР"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": name_text, "callback_data": "people_name"},
+                {"text": birthday_text, "callback_data": "people_birthdays"},
+            ],
             [
                 {"text": "➕ Ребенок", "callback_data": "add_child"},
                 {"text": "➕ Учитель", "callback_data": "add_teacher"},
@@ -492,17 +560,15 @@ def main_menu_keyboard() -> dict:
                 {"text": "🔄 Вернуть", "callback_data": "restore"},
                 {"text": "🗑️ Удалить", "callback_data": "delete"},
             ],
+            [{"text": "🏠 Главное меню", "callback_data": "menu"}],
         ]
     }
 
 
-def people_menu_keyboard() -> dict:
+def settings_keyboard() -> dict:
     return {
         "inline_keyboard": [
-            [
-                {"text": "➕ Добавить", "callback_data": "add_child"},
-                {"text": "✏️ Изменить", "callback_data": "edit"},
-            ],
+            [{"text": "⏰ Изменить время", "callback_data": "settings_time"}],
             [{"text": "🏠 Главное меню", "callback_data": "menu"}],
         ]
     }
@@ -556,6 +622,17 @@ def _validate_birth_date(day: int, month: int, year: int | None) -> str | None:
     except ValueError:
         return "Некорректная дата рождения."
     return None
+
+
+def _parse_time(value: str) -> str | None:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value.strip())
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
 
 
 def _parse_person_id(value: str) -> int | None:
