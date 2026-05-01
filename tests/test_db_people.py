@@ -54,6 +54,13 @@ class DbPeopleTest(unittest.TestCase):
             self.assertEqual(summary.paid_count, 1)
             self.assertEqual(summary.paid_total, 1000)
 
+            self.assertTrue(db.close_collection(collection_id))
+            self.assertEqual(db.list_collection_summaries(active_only=True), [])
+            self.assertEqual(len(db.list_collection_summaries(active_only=False)), 1)
+
+            self.assertTrue(db.delete_collection(collection_id))
+            self.assertEqual(db.list_collection_summaries(active_only=False), [])
+
 
 if __name__ == "__main__":
     unittest.main()

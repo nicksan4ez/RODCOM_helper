@@ -525,6 +525,15 @@ class Database:
             self.connection.commit()
             return cursor.rowcount > 0
 
+    def delete_collection(self, collection_id: int) -> bool:
+        with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM collections WHERE id = ?",
+                (collection_id,),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_person(row: sqlite3.Row) -> Person:
         return Person(

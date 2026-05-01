@@ -30,10 +30,16 @@ class TelegramClient:
             payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         self._request("sendMessage", payload)
 
-    def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> None:
+    def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: str | None = None,
+        show_alert: bool = False,
+    ) -> None:
         payload: dict[str, Any] = {"callback_query_id": callback_query_id}
         if text:
             payload["text"] = text
+            payload["show_alert"] = "true" if show_alert else "false"
         self._request("answerCallbackQuery", payload)
 
     def get_updates(self, offset: int | None, timeout: int = 30) -> list[dict[str, Any]]:

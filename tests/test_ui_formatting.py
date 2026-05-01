@@ -2,7 +2,7 @@ from datetime import date
 import unittest
 
 from rodcom_bot.db import Person
-from rodcom_bot.bot import _parse_amount, _parse_person_ids, _parse_time
+from rodcom_bot.bot import _parse_amount, _parse_person_ids, _parse_time, collection_detail_keyboard, collections_keyboard
 from rodcom_bot.reminders import ReminderEvent, format_event, format_events
 
 
@@ -53,6 +53,25 @@ class UiFormattingTest(unittest.TestCase):
         self.assertEqual(_parse_person_ids("1 2\n3"), [1, 2, 3])
         self.assertEqual(_parse_person_ids("1, 1, 2"), [1, 2])
         self.assertEqual(_parse_person_ids("1, Вася"), [])
+
+    def test_collection_keyboards_expose_report_archive_and_delete(self):
+        collections = collections_keyboard(has_closed=True)
+        collection_buttons = [
+            button["callback_data"]
+            for row in collections["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("collection_archive", collection_buttons)
+        self.assertIn("collection_report", collection_buttons)
+
+        detail = collection_detail_keyboard(42)
+        detail_buttons = [
+            button["callback_data"]
+            for row in detail["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("collection_close:42", detail_buttons)
+        self.assertIn("collection_delete:42", detail_buttons)
 
 
 if __name__ == "__main__":

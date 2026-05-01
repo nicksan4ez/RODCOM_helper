@@ -139,7 +139,8 @@ class RodcomBot:
         chat_id = chat.get("id")
         user_id = sender.get("id")
         if callback_id:
-            self.telegram.answer_callback_query(callback_id)
+            status_text = "⏳ Обновляю отчет, это может занять несколько секунд..." if data == "collection_report" else None
+            self.telegram.answer_callback_query(callback_id, status_text)
         if chat_id is None or user_id is None:
             return
         if not self._is_authorized(chat_id, user_id):
@@ -212,6 +213,8 @@ class RodcomBot:
             return self._settings(), settings_keyboard()
         if data == "collections":
             return self._collections(), self._collections_keyboard()
+        if data == "collection_archive":
+            return self._collections_archive(), self._collection_archive_keyboard()
         if data == "collection_report":
             return self._update_collections_report(), self._collections_keyboard()
         if data.startswith("collection_open:"):
@@ -233,11 +236,24 @@ class RodcomBot:
             return self._collection_debtors(collection_id), collection_detail_keyboard(collection_id)
         if data.startswith("collection_close:"):
             collection_id = int(data.split(":", 1)[1])
-            return "🔒 <b>Закрыть сбор?</b>\n\nПосле закрытия он пропадет из активных сборов.", collection_close_confirm_keyboard(collection_id)
+            return (
+                "🙈 <b>Скрыть сбор?</b>\n\n"
+                "Он пропадет из активного списка бота, но останется в базе и будет попадать в отчет."
+            ), collection_close_confirm_keyboard(collection_id)
         if data.startswith("collection_close_confirm:"):
             collection_id = int(data.split(":", 1)[1])
             closed = self.db.close_collection(collection_id)
-            return (done("Сбор закрыт.") if closed else error("Не нашел сбор.")), self._collections_keyboard()
+            return (done("Сбор скрыт. Он останется в отчете.") if closed else error("Не нашел сбор.")), self._collections_keyboard()
+        if data.startswith("collection_delete:"):
+            collection_id = int(data.split(":", 1)[1])
+            return (
+                "🗑️ <b>Удалить сбор полностью?</b>\n\n"
+                "Он исчезнет из базы и больше не будет попадать в отчеты. Это действие нельзя отменить."
+            ), collection_delete_confirm_keyboard(collection_id)
+        if data.startswith("collection_delete_confirm:"):
+            collection_id = int(data.split(":", 1)[1])
+            deleted = self.db.delete_collection(collection_id)
+            return (done("Сбор удален из базы и отчетов.") if deleted else error("Не нашел сбор.")), self._collections_keyboard()
         if data == "settings_time":
             self.db.set_user_state(chat_id, user_id, "settings_time")
             return prompt("Время напоминаний", "Введите время ежедневной проверки в формате ЧЧ:ММ.", "07:30"), cancel_keyboard()
@@ -619,7 +635,38 @@ class RodcomBot:
         return "\n\n".join(lines)
 
     def _collections_keyboard(self) -> dict:
-        return collections_keyboard(self.db.list_collection_summaries(active_only=True))
+        summaries = self.db.list_collection_summaries(active_only=False)
+        active = [summary for summary in summaries if summary.collection.status == "active"]
+        has_closed = any(summary.collection.status == "closed" for summary in summaries)
+        return collections_keyboard(active, has_closed=has_closed)
+
+    def _collections_archive(self) -> str:
+        summaries = [
+            summary
+            for summary in self.db.list_collection_summaries(active_only=False)
+            if summary.collection.status == "closed"
+        ]
+        if not summaries:
+            return "🗃️ <b>Скрытые сборы</b>\n\nСкрытых сборов пока нет."
+        lines = ["🗃️ <b>Скрытые сборы</b>\n"]
+        for summary in summaries:
+            remaining = summary.expected_total - summary.paid_total
+            lines.append(
+                f"<code>{summary.collection.id}</code> · <b>{h(summary.collection.title)}</b>\n"
+                f"   👥 Сдали: <b>{summary.paid_count}/{summary.members_count}</b>\n"
+                f"   ✅ Собрано: {summary.paid_total} ₽\n"
+                f"   ⏳ Осталось: {remaining} ₽\n"
+                f"   📄 В отчете: да"
+            )
+        return "\n\n".join(lines)
+
+    def _collection_archive_keyboard(self) -> dict:
+        summaries = [
+            summary
+            for summary in self.db.list_collection_summaries(active_only=False)
+            if summary.collection.status == "closed"
+        ]
+        return collection_archive_keyboard(summaries)
 
     def _update_collections_report(self) -> str:
         if not self.db.list_collection_summaries(active_only=False):
@@ -655,6 +702,7 @@ class RodcomBot:
         lines = [
             f"💰 <b>{h(summary.collection.title)}</b>",
             "",
+            f"📌 Статус: <b>{'активный' if summary.collection.status == 'active' else 'скрытый'}</b>",
             f"👥 Сдали: <b>{summary.paid_count}/{summary.members_count}</b>",
             f"💵 Сумма: {summary.collection.expected_amount} ₽ с ученика",
             f"✅ Собрано: {summary.paid_total} ₽",
@@ -750,12 +798,23 @@ def main_menu_keyboard() -> dict:
     }
 
 
-def collections_keyboard(summaries=None) -> dict:
+def collections_keyboard(summaries=None, has_closed: bool = False) -> dict:
     rows = []
     for summary in summaries or []:
         rows.append([{"text": f"💰 {summary.collection.title}", "callback_data": f"collection_open:{summary.collection.id}"}])
+    if has_closed:
+        rows.append([{"text": "🗃️ Скрытые сборы", "callback_data": "collection_archive"}])
     rows.append([{"text": "📤 Обновить отчет", "callback_data": "collection_report"}])
     rows.append([{"text": "➕ Новый сбор", "callback_data": "collection_new"}])
+    rows.append([{"text": "🏠 Главное меню", "callback_data": "menu"}])
+    return {"inline_keyboard": rows}
+
+
+def collection_archive_keyboard(summaries=None) -> dict:
+    rows = []
+    for summary in summaries or []:
+        rows.append([{"text": f"🗃️ {summary.collection.title}", "callback_data": f"collection_open:{summary.collection.id}"}])
+    rows.append([{"text": "💰 Активные сборы", "callback_data": "collections"}])
     rows.append([{"text": "🏠 Главное меню", "callback_data": "menu"}])
     return {"inline_keyboard": rows}
 
@@ -766,7 +825,8 @@ def collection_detail_keyboard(collection_id: int) -> dict:
             [{"text": "✅ Сдали", "callback_data": f"collection_pay:{collection_id}"}],
             [{"text": "↩️ Отменить оплату", "callback_data": f"collection_unpay:{collection_id}"}],
             [{"text": "📋 Сообщение должникам", "callback_data": f"collection_debtors:{collection_id}"}],
-            [{"text": "🔒 Закрыть сбор", "callback_data": f"collection_close:{collection_id}"}],
+            [{"text": "🙈 Скрыть сбор", "callback_data": f"collection_close:{collection_id}"}],
+            [{"text": "🗑️ Удалить сбор", "callback_data": f"collection_delete:{collection_id}"}],
             [{"text": "💰 Все сборы", "callback_data": "collections"}],
         ]
     }
@@ -775,7 +835,16 @@ def collection_detail_keyboard(collection_id: int) -> dict:
 def collection_close_confirm_keyboard(collection_id: int) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "🔒 Да, закрыть", "callback_data": f"collection_close_confirm:{collection_id}"}],
+            [{"text": "🙈 Да, скрыть", "callback_data": f"collection_close_confirm:{collection_id}"}],
+            [{"text": "↩️ Назад к сбору", "callback_data": f"collection_open:{collection_id}"}],
+        ]
+    }
+
+
+def collection_delete_confirm_keyboard(collection_id: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "🗑️ Да, удалить", "callback_data": f"collection_delete_confirm:{collection_id}"}],
             [{"text": "↩️ Назад к сбору", "callback_data": f"collection_open:{collection_id}"}],
         ]
     }
