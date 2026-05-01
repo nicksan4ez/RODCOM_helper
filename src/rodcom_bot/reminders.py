@@ -51,6 +51,15 @@ class ReminderService:
         result.sort(key=lambda event: (event.celebration, event.person.full_name))
         return result
 
+    def matching_today(self, today: date) -> list[ReminderEvent]:
+        result = []
+        for person in self.db.list_people():
+            event = self._event_for(person, today)
+            if today in {event.birthday, event.celebration, event.reminder}:
+                result.append(event)
+        result.sort(key=lambda event: (event.celebration, event.birthday, event.person.full_name))
+        return result
+
     def mark_sent(self, events: list[ReminderEvent]) -> None:
         for event in events:
             self.db.mark_sent(event.person.id, event.birthday, event.reminder)
@@ -81,7 +90,27 @@ def format_event(event: ReminderEvent) -> str:
     )
 
 
+def format_today_event(event: ReminderEvent, today: date) -> str:
+    matches = []
+    if today == event.birthday:
+        matches.append("🎂 сегодня день рождения")
+    if today == event.celebration:
+        matches.append("🎁 сегодня день поздравления")
+    if today == event.reminder:
+        matches.append("🔔 сегодня день напоминания")
+    match_text = "\n   " + "\n   ".join(matches) if matches else ""
+    return format_event(event) + match_text
+
+
 def format_events(title: str, events: list[ReminderEvent]) -> str:
     if not events:
         return f"📭 <b>{h(title)}</b>\n\nНет событий."
     return f"📌 <b>{h(title)}</b>\n\n" + "\n\n".join(format_event(event) for event in events)
+
+
+def format_today_events(title: str, events: list[ReminderEvent], today: date) -> str:
+    if not events:
+        return f"📭 <b>{h(title)}</b>\n\nНет событий."
+    return f"📌 <b>{h(title)}</b>\n\n" + "\n\n".join(
+        format_today_event(event, today) for event in events
+    )

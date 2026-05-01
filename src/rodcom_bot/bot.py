@@ -13,7 +13,7 @@ from .config import Config
 from .db import Database
 from .docx_import import import_people_from_docx
 from .formatting import MONTHS_GENITIVE, format_date_ru
-from .reminders import ReminderService, format_events
+from .reminders import ReminderService, format_events, format_today_events
 from .telegram_api import TelegramClient
 from .ui import done, error, h, help_text, main_menu_text, prompt, warn
 
@@ -159,7 +159,7 @@ class RodcomBot:
         if command == "/next":
             return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10))
         if command == "/today":
-            return format_events("Напоминания на сегодня", self.reminders.due_today(today))
+            return format_today_events("Сегодня", self.reminders.matching_today(today), today)
         if command == "/month":
             return self._month(rest, today)
         if command == "/people":
@@ -193,7 +193,7 @@ class RodcomBot:
         if data == "next":
             return format_events("Ближайшие дни рождения", self.reminders.upcoming(today, limit=10)), main_menu_keyboard()
         if data == "today":
-            return format_events("Напоминания на сегодня", self.reminders.due_today(today)), main_menu_keyboard()
+            return format_today_events("Сегодня", self.reminders.matching_today(today), today), main_menu_keyboard()
         if data == "people":
             return self._people(sort_by="name"), people_menu_keyboard(active_sort="name")
         if data == "people_birthdays":
