@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CollectionsImportTest(unittest.TestCase):
     def test_parse_current_cashbox_workbook(self):
-        collections = parse_collections_from_xlsx(ROOT / "Касса класса.xlsx")
+        collections = parse_collections_from_xlsx(ROOT / "kassa.xlsx")
         titles = {collection.title for collection in collections}
 
         self.assertIn("Прописи", titles)
@@ -23,7 +23,7 @@ class CollectionsImportTest(unittest.TestCase):
 
     def test_parse_can_include_only_selected_active_sheets(self):
         collections = parse_collections_from_xlsx(
-            ROOT / "Касса класса.xlsx",
+            ROOT / "kassa.xlsx",
             include_titles={"Последний звонок значки"},
         )
 
@@ -32,7 +32,7 @@ class CollectionsImportTest(unittest.TestCase):
 
     def test_household_sheets_are_not_imported_as_simple_collections(self):
         collections = parse_collections_from_xlsx(
-            ROOT / "Касса класса.xlsx",
+            ROOT / "kassa.xlsx",
             include_titles={"Хоз нужды 2025-2026", "Хоз нужды 2026-2027"},
         )
 
@@ -44,8 +44,8 @@ class CollectionsImportTest(unittest.TestCase):
             db.migrate()
             db.seed_people(import_people_from_docx(ROOT / "List.docx"))
 
-            first = import_collections_from_xlsx(db, ROOT / "Касса класса.xlsx")
-            second = import_collections_from_xlsx(db, ROOT / "Касса класса.xlsx")
+            first = import_collections_from_xlsx(db, ROOT / "kassa.xlsx")
+            second = import_collections_from_xlsx(db, ROOT / "kassa.xlsx")
 
             self.assertEqual(len(first), len(second))
             self.assertEqual(len(db.list_collections()), len(first))

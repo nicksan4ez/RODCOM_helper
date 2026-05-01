@@ -7,5 +7,5 @@ __pycache__/
 .DS_Store
 data/
 *.sqlite3
-Касса класса.xlsx
+kassa.xlsx
 List.docx

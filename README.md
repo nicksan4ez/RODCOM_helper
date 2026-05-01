@@ -60,7 +60,7 @@ docker compose run --rm \
 
 ```bash
 docker compose run --rm \
-  -v "$PWD/Касса класса.xlsx:/tmp/cashbox.xlsx:ro" \
+  -v "$PWD/kassa.xlsx:/tmp/cashbox.xlsx:ro" \
   rodcom-bot \
   python -m rodcom_bot.collections_import \
     --db /data/rodcom.sqlite3 \
@@ -72,7 +72,7 @@ docker compose run --rm \
 
 ```bash
 docker compose run --rm \
-  -v "$PWD/Касса класса.xlsx:/tmp/cashbox.xlsx:ro" \
+  -v "$PWD/kassa.xlsx:/tmp/cashbox.xlsx:ro" \
   rodcom-bot \
   python -m rodcom_bot.collections_import \
     --db /data/rodcom.sqlite3 \
