@@ -401,26 +401,42 @@ class RodcomBot:
             return done(f"Создан сбор <b>{h(title)}</b> на сумму <b>{amount} ₽</b> с ученика.\nНомер сбора: <code>{collection_id}</code>"), self._collections_keyboard()
 
         if state == "collection_pay_person":
-            person_id = _parse_person_id(text)
+            person_ids = _parse_person_ids(text)
             collection_id = int(payload["collection_id"])
-            if person_id is None:
-                return warn("Введите только номер ребенка из списка."), cancel_keyboard()
+            if not person_ids:
+                return warn("Введите номера через запятую, например: 1,2,3."), cancel_keyboard()
             summary = self.db.get_collection_summary(collection_id)
             if summary is None:
                 self.db.clear_user_state(chat_id, user_id)
                 return error("Не нашел сбор."), self._collections_keyboard()
-            updated = self.db.set_collection_payment(collection_id, person_id, summary.collection.expected_amount)
+            updated_count = sum(
+                1
+                for person_id in person_ids
+                if self.db.set_collection_payment(collection_id, person_id, summary.collection.expected_amount)
+            )
             self.db.clear_user_state(chat_id, user_id)
-            return (done("Оплата отмечена.") if updated else error("Не нашел ребенка в этом сборе.")), collection_detail_keyboard(collection_id)
+            return (
+                done(f"Отмечено оплат: <b>{updated_count}</b>.")
+                if updated_count
+                else error("Не нашел указанные номера в этом сборе.")
+            ), collection_detail_keyboard(collection_id)
 
         if state == "collection_unpay_person":
-            person_id = _parse_person_id(text)
+            person_ids = _parse_person_ids(text)
             collection_id = int(payload["collection_id"])
-            if person_id is None:
-                return warn("Введите только номер ребенка из списка."), cancel_keyboard()
-            updated = self.db.set_collection_payment(collection_id, person_id, 0)
+            if not person_ids:
+                return warn("Введите номера через запятую, например: 1,2,3."), cancel_keyboard()
+            updated_count = sum(
+                1
+                for person_id in person_ids
+                if self.db.set_collection_payment(collection_id, person_id, 0)
+            )
             self.db.clear_user_state(chat_id, user_id)
-            return (done("Оплата отменена.") if updated else error("Не нашел ребенка в этом сборе.")), collection_detail_keyboard(collection_id)
+            return (
+                done(f"Отменено оплат: <b>{updated_count}</b>.")
+                if updated_count
+                else error("Не нашел указанные номера в этом сборе.")
+            ), collection_detail_keyboard(collection_id)
 
         return None
 
@@ -630,9 +646,20 @@ class RodcomBot:
         debtors = [member for member in self.db.list_collection_members(collection_id) if member.status != "paid"]
         if not debtors:
             return f"✅ <b>{h(summary.collection.title)}</b>\n\nВсе сдали."
-        lines = [f"❌ <b>Не сдали: {h(summary.collection.title)}</b>"]
-        lines.extend(f"• {h(member.full_name)}" for member in debtors)
-        return "\n".join(lines)
+        plain_lines = [
+            "Добрый день!",
+            "",
+            f"Напоминаем про сбор «{summary.collection.title}».",
+            f"Сумма: {summary.collection.expected_amount} ₽.",
+            "",
+            "Пока не сдали:",
+        ]
+        plain_lines.extend(f"- {member.full_name}" for member in debtors)
+        plain_lines.extend(["", "Спасибо!"])
+        return (
+            f"📋 <b>Сообщение для родительского чата</b>\n\n"
+            f"<pre>{h(chr(10).join(plain_lines))}</pre>"
+        )
 
     def _collection_members_prompt(self, collection_id: int, only_unpaid: bool, action: str) -> str:
         summary = self.db.get_collection_summary(collection_id)
@@ -649,7 +676,10 @@ class RodcomBot:
         for member in members:
             status = "✅" if member.status == "paid" else "❌"
             lines.append(f"<code>{member.person_id}</code> · {status} {h(member.full_name)}")
-        lines.append("\nВведите номер ребенка.")
+        if only_unpaid:
+            lines.append("\nВведите номера тех, кто сдал, например: <code>1,2,3</code>.")
+        else:
+            lines.append("\nВведите номера, у кого нужно отменить оплату, например: <code>1,2,3</code>.")
         return "\n".join(lines)
 
 
@@ -702,9 +732,9 @@ def collections_keyboard(summaries=None) -> dict:
 def collection_detail_keyboard(collection_id: int) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "✅ Отметить оплату", "callback_data": f"collection_pay:{collection_id}"}],
+            [{"text": "✅ Сдали", "callback_data": f"collection_pay:{collection_id}"}],
             [{"text": "↩️ Отменить оплату", "callback_data": f"collection_unpay:{collection_id}"}],
-            [{"text": "❌ Должники", "callback_data": f"collection_debtors:{collection_id}"}],
+            [{"text": "📋 Сообщение должникам", "callback_data": f"collection_debtors:{collection_id}"}],
             [{"text": "🔒 Закрыть сбор", "callback_data": f"collection_close:{collection_id}"}],
             [{"text": "💰 Все сборы", "callback_data": "collections"}],
         ]
@@ -826,3 +856,13 @@ def _parse_amount(value: str) -> int | None:
 def _parse_person_id(value: str) -> int | None:
     value = value.strip()
     return int(value) if value.isdigit() else None
+
+
+def _parse_person_ids(value: str) -> list[int]:
+    ids = []
+    for part in re.split(r"[\s,;]+", value.strip()):
+        if part.isdigit():
+            ids.append(int(part))
+        elif part:
+            return []
+    return list(dict.fromkeys(ids))
