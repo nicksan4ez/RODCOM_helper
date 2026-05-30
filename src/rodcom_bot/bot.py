@@ -74,7 +74,7 @@ class RodcomBot:
         while not self._stop.is_set():
             now = datetime.now(self.timezone)
             today_key = now.date().isoformat()
-            if now.strftime("%H:%M") == self._check_time() and last_run != today_key:
+            if self._should_run_daily_check(now, last_run):
                 try:
                     self.send_due_reminders(now.date())
                     last_run = today_key
@@ -88,8 +88,47 @@ class RodcomBot:
             LOGGER.info("No birthday reminders due on %s", today.isoformat())
             return
         message = format_events("Напоминание о днях рождения", events)
-        self.telegram.send_message(self.config.admin_chat_id, message)
+        delivered = self._send_reminder_to_recipients(message)
+        if delivered == 0:
+            raise RuntimeError("Could not deliver birthday reminder to any configured recipient")
         self.reminders.mark_sent(events)
+
+    def _send_reminder_to_recipients(self, message: str) -> int:
+        delivered = 0
+        for recipient in self._reminder_recipients():
+            try:
+                self.telegram.send_message(recipient, message)
+                delivered += 1
+            except Exception:
+                LOGGER.exception("Could not send birthday reminder to recipient %s", recipient)
+        return delivered
+
+    def _reminder_recipients(self) -> list[str]:
+        recipients = [str(self.config.admin_chat_id)]
+        recipients.extend(str(user_id) for user_id in sorted(self.config.admin_user_ids))
+        return list(dict.fromkeys(recipients))
+
+    def _test_delivery(self) -> str:
+        message = (
+            "🧪 <b>Тест доставки</b>\n\n"
+            "Если вы видите это сообщение, бот может отправлять сюда автоматические напоминания."
+        )
+        lines = ["🧪 <b>Проверка доставки уведомлений</b>\n"]
+        delivered = 0
+        for recipient in self._reminder_recipients():
+            try:
+                self.telegram.send_message(recipient, message)
+            except Exception as exc:
+                LOGGER.exception("Test delivery failed for recipient %s", recipient)
+                lines.append(f"❌ <code>{h(recipient)}</code>: {h(exc)}")
+            else:
+                delivered += 1
+                lines.append(f"✅ <code>{h(recipient)}</code>: отправлено")
+        lines.append("")
+        lines.append(f"Итого: <b>{delivered}/{len(self._reminder_recipients())}</b> получателей.")
+        if self.config.admin_user_ids:
+            lines.append("Личные сообщения работают только после того, как админ открыл чат с ботом и нажал /start.")
+        return "\n".join(lines)
 
     def _poll_loop(self) -> None:
         offset: int | None = None
@@ -187,6 +226,8 @@ class RodcomBot:
             return self._collections()
         if command == "/test_reminder":
             return format_events("Тестовое напоминание", self.reminders.upcoming(today, limit=3))
+        if command == "/test_delivery":
+            return self._test_delivery()
         return warn("Неизвестная команда.") + "\n\n" + help_text()
 
     def _dispatch_callback(
@@ -617,6 +658,11 @@ class RodcomBot:
 
     def _check_time(self) -> str:
         return self.db.get_setting("check_time", self.config.check_time) or self.config.check_time
+
+    def _should_run_daily_check(self, now: datetime, last_run: str | None) -> bool:
+        today_key = now.date().isoformat()
+        check_time = _parse_time(self._check_time()) or self.config.check_time
+        return now.strftime("%H:%M") >= check_time and last_run != today_key
 
     def _collections(self) -> str:
         summaries = self.db.list_collection_summaries(active_only=True)

@@ -18,7 +18,7 @@
 3. Заполните:
    - `BOT_TOKEN` — токен бота.
    - `ADMIN_CHAT_ID` — id админского чата.
-   - `ADMIN_USER_IDS` — Telegram user id администраторов через запятую.
+   - `ADMIN_USER_IDS` — Telegram user id администраторов через запятую. Автоматические напоминания также отправляются этим админам в личные сообщения, если они уже открыли чат с ботом и нажали `/start`.
    - `YANDEX_DISK_TOKEN` — OAuth-токен Яндекс.Диска для выгрузки отчетов.
    - `YANDEX_DISK_REPORT_PATH` — путь к файлу отчета на Диске, например `/RODCOM/sbori_report.xlsx`.
 4. Запустите:
@@ -101,7 +101,7 @@ docker compose run --rm \
 
 Технические команды также оставлены как быстрый способ для продвинутых пользователей:
 
-- `/next`, `/month [1-12]`, `/today`, `/people`, `/settings`, `/test_reminder`.
+- `/next`, `/month [1-12]`, `/today`, `/people`, `/settings`, `/test_reminder`, `/test_delivery`.
 - `/add ...`, `/edit ...`, `/disable ...`, `/restore ...`, `/delete ...`.
 
 ## Сборы

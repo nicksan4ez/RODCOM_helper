@@ -22,7 +22,7 @@ def help_text() -> str:
         "• добавить ребенка или учителя;\n"
         "• изменить ФИО, дату, роль или примечание;\n"
         "• скрыть, вернуть или удалить запись.\n\n"
-        "Быстрые команды: /next, /today, /month, /people, /settings."
+        "Быстрые команды: /next, /today, /month, /people, /settings, /test_delivery."
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
@@ -65,9 +66,29 @@ class TelegramClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(_telegram_http_error_message(method, exc)) from exc
         if not body.get("ok"):
             LOGGER.error("Telegram API error: %s", body)
             raise RuntimeError(body.get("description", "Telegram API error"))
         return body
+
+
+def _telegram_http_error_message(method: str, exc: urllib.error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8")
+    except Exception:
+        body = ""
+    if not body:
+        return f"Telegram API {method} failed: HTTP {exc.code}"
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return f"Telegram API {method} failed: HTTP {exc.code}: {body[:500]}"
+    description = payload.get("description")
+    if description:
+        return f"Telegram API {method} failed: HTTP {exc.code}: {description}"
+    return f"Telegram API {method} failed: HTTP {exc.code}: {body[:500]}"
